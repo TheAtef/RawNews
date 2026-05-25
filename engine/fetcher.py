@@ -10,14 +10,15 @@ import structlog
 
 from core.config import NewsSourceConfig
 from engine.scraper import RawArticle
+from core.config import settings
 logger = structlog.get_logger(__name__)
 
 import cloudscraper
-
+import json
+import requests
+from bs4 import BeautifulSoup
 
 class RSSFetcher:
-
-
     def __init__(self, timeout: int = 15) -> None:
         self._timeout = timeout
         self._cs = cloudscraper.create_scraper()
@@ -97,6 +98,57 @@ class RSSFetcher:
 
         return articles
 
+
+class GoogleNews:
+    def __init__(self, query, time_window="7d" ,limit=20, scrape_full_content=True):
+        self.cs = cloudscraper.create_scraper()
+        self.query = query
+        self.time_window = time_window
+        self.limit = limit
+        self.scrape_full_content = scrape_full_content
+        self.link = f'https://news.google.com/rss/search?q={query}when%3A{time_window}&hl=ar&gl=SA&ceid=SA%3Aar'
+    
+    async def fetch_news(self) -> List[feedparser.FeedParserDict]:
+        with self.cs.get(self.link, timeout=15) as cs:
+            if cs.status_code == 200:
+                rss = feedparser.parse(cs.content)
+                logger.info("google_news_fetch_success", query=self.query, total_entries=len(rss.entries))
+                articles = []
+                for entry in rss.entries:
+                    try:
+                        url = await self.getGoogleRedirectUrl(entry.link)
+                        if any(blocked in url for blocked in settings.blocked_websites):
+                            continue
+                        entry.link = url
+                        articles.append(entry)
+                    except Exception:
+                        continue
+                    if len(articles) >= self.limit:
+                        break
+            return articles
+
+            
+    async def getGoogleRedirectUrl(self, rss_url: str) -> str:
+        resp = requests.get(rss_url)
+        data = BeautifulSoup(resp.text, 'html.parser').select_one('c-wiz[data-p]').get('data-p')
+        obj = json.loads(data.replace('%.@.', '["garturlreq",'))
+
+        payload = {
+            'f.req': json.dumps([[['Fbv4je', json.dumps(obj[:-6] + obj[-2:]), 'null', 'generic']]])
+        }
+
+        headers = {
+        'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+        }
+
+        url = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+        response = requests.post(url, headers=headers, data=payload)
+        array_string = json.loads(response.text.replace(")]}'", ""))[0][2]
+        article_url = json.loads(array_string)[1]
+
+        return article_url
+    
 
 
 class ArticleScraper:

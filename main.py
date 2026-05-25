@@ -4,8 +4,8 @@ main.py — FastAPI application.
 Endpoints:
     GET  /health         — System health check
     GET  /sources        — List configured news sources
+    GET  /articles       — List recent articles 
     GET  /article/{id}   — Retrieve article by ID
-    GET  /analysis/{id}  — Retrieve past analysis
     GET  /stats          — Pipeline statistics
 
 
@@ -20,7 +20,7 @@ from collections.abc import MutableSet
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Literal
 
 import structlog
 import uvicorn
@@ -48,7 +48,7 @@ _background_fetch_running = False
 async def background_fetch_loop(interval_minutes: int = 30) -> None:
     """Periodically fetch fresh news from all sources."""
     global _background_fetch_running
-    _background_fetch_running = True
+    _background_fetch_running = False
 
     # await asyncio.sleep(5)
 
@@ -269,6 +269,20 @@ async def trigger_fetch(
 
     background_tasks.add_task(_do_fetch)
     return {"status": "fetch_scheduled", "message": "News fetch started in background"}
+
+@app.get(
+    "/search",
+    summary="Search for news articles",
+    tags=["Search"],
+) 
+async def search_news(
+    query: str = Query(..., description="Search query"),
+    time_window: Literal["1h", "1d", "7d", "30d"] = Query(default="7d", description="Time window for search relevance"),
+    limit: int = Query(default=20, ge=1, description="Maximum number of articles to search"),
+    scrape_full_content: bool = Query(default=True),
+) -> Dict[str, Any]:
+    new_articles = await source_manager.search_google_news(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
+    return {"status": "search_done", "config": {"query": query, "time_window": time_window, "limit": limit}, "count": len(new_articles), "results": [{"title": a.title, "content": a.content, "source": a.source_name, "url": a.url, "published_at": a.published_at, "scraped_at": a.scraped_at, "language": a.language} for a in new_articles ]}
 
 
 

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     max_articles_per_source: int = 50
     article_max_age_hours: int = 48
     fetch_concurrency: int = 8
+    blocked_websites:List[str] = ["www.syriahr.com", "www.reuters.com"]
     
     api_host: str = "0.0.0.0"
     api_port: int = 8000

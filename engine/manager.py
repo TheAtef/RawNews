@@ -2,6 +2,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+import newspaper
+import cloudscraper
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import NewsSourceConfig, settings
 from core.sources_list import ARABIC_NEWS_SOURCES
 from core.constants import ARABIC_STOPWORDS
-from engine.fetcher import ArticleScraper, RSSFetcher
+from engine.fetcher import ArticleScraper, RSSFetcher, GoogleNews
 from engine.scraper import RawArticle
 from models.orm import ArticleORM
 
@@ -26,7 +28,6 @@ logger = structlog.get_logger(__name__)
 class SourceManager:
     def __init__(self) -> None:
         self._sources = ARABIC_NEWS_SOURCES
-        
         self._cleaner = ArabicNewsCleaner(remove_numbers=False, keep_quotes=True)
         self._normalizer = ArabicNormalizer()
         self._tokenizer = ArabicTokenizer()
@@ -266,3 +267,35 @@ class SourceManager:
             }
             for s in self._sources
         ]
+        
+    async def search_google_news(self, query: str, time_window: str = "7d", limit: int = 20, scrape_full_content: bool = True) -> List[RawArticle]:
+        google_news = GoogleNews(query=query, time_window = time_window, limit=limit, scrape_full_content=scrape_full_content)
+        entries = await google_news.fetch_news()
+        scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
+        articles: List[RawArticle] = []
+        for entry in entries:
+            try:
+                text = ""
+                data = newspaper.article(entry.link)
+                if hasattr(data, 'text_cleaned') and data.text_cleaned != "":
+                    text = data.text_cleaned
+                elif hasattr(data, 'text') and data.text != "":
+                    text = data.text
+                else: 
+                    text = await scraper.scrape(entry.link)
+                    
+                article = RawArticle(
+                    url=entry.link,
+                    title=entry.title.rsplit(' - ', 1)[0],
+                    content=text,
+                    source_name=entry.source.title,
+                    published_at= datetime.strptime(entry.published, "%a, %d %b %Y %H:%M:%S GMT"),
+                    scraped_at= datetime.utcnow(),
+                    reliability_score=None,
+                    language='ar',
+                )       
+                articles.append(article)
+            except Exception as e:
+                logger.error("google_news_article_error", url=entry.link, error=str(e))
+                continue
+        return articles
