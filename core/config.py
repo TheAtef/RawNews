@@ -28,20 +28,7 @@ class Settings(BaseSettings):
     # DB Settings
     database_url: str = "sqlite+aiosqlite:///./arabic_news.db"
     database_path: str = "./arabic_news.db"
-    
-    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    arabic_bert_model: str = "CAMeL-Lab/bert-base-arabic-camelbert-msa"
-    embedding_dim: int = 384
-    embedding_cache_size: int = 10000
-    
-    # Thresholds
-    clustering_similarity_threshold: float = 0.72
-    clustering_min_cluster_size: int = 2
-    bias_score_threshold: float = 0.35
-    propaganda_score_threshold: float = 0.40
-    contradiction_threshold: float = 0.65
-    min_articles_for_consensus: int = 2
-    
+
     # Fetching Settings
     fetch_timeout_seconds: int = 15
     max_articles_per_source: int = 50
