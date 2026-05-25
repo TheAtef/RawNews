@@ -1,7 +1,6 @@
-from typing import Dict
+from __future__ import annotations
 
-from typing import List
-
+from typing import Dict, List
 
 ARABIC_STOPWORDS: List[str] = [
     "في", "من", "إلى", "على", "عن", "مع", "هذا", "هذه", "ذلك", "تلك",

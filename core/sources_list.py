@@ -1,7 +1,7 @@
+from __future__ import annotations
+
 from typing import List
-
 from core.config import NewsSourceConfig
-
 
 ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
     NewsSourceConfig(
@@ -65,7 +65,7 @@ ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
         name_ar="فرانس 24",
         rss_urls=["https://www.france24.com/ar/%D8%A7%D9%84%D8%B4%D8%B1%D9%82-%D8%A7%D9%84%D8%A3%D9%88%D8%B3%D8%B7/rss", #middle east
                   "https://www.france24.com/ar/%D8%A3%D9%88%D8%B1%D9%88%D8%A8%D8%A7/rss", #europe
-                  "https://www.france24.com/ar/%D8%A3%D9%85%D8%B1%D9%8A%D9%83%D8%A7/rss", #america
+                  "https://www.france24.com/ar/%D8%A3%D9%85%D8%B1%D9%82%D8%A7/rss", #america
                   "https://www.france24.com/ar/%D8%A2%D8%B3%D9%8A%D8%A7/rss"], #asia
         base_url="https://www.france24.com/ar/",
         reliability_score=0.60,

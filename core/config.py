@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import os
-from typing import Dict, List, Optional
+from typing import List
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
@@ -25,11 +24,9 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
     
-    # DB Settings
     database_url: str = "sqlite+aiosqlite:///./arabic_news.db"
     database_path: str = "./arabic_news.db"
 
-    # Fetching Settings
     fetch_timeout_seconds: int = 15
     max_articles_per_source: int = 50
     article_max_age_hours: int = 48

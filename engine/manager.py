@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
@@ -6,18 +5,64 @@ from typing import Any, Dict, List, Optional
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.config import  NewsSourceConfig, settings
+
+from core.config import NewsSourceConfig, settings
 from core.sources_list import ARABIC_NEWS_SOURCES
+from core.constants import ARABIC_STOPWORDS
 from engine.fetcher import ArticleScraper, RSSFetcher
 from engine.scraper import RawArticle
 from models.orm import ArticleORM
 
+from preprocessing.cleaner import ArabicNewsCleaner
+from preprocessing.normalizer import ArabicNormalizer
+from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
+from preprocessing.deduplicator import ArticleDeduplicator
+from preprocessing.analyzer import HeuristicScorer, StoryGrouper
+from preprocessing.utils import is_arabic_text
+
 logger = structlog.get_logger(__name__)
 
-class SourceManager:
 
+class SourceManager:
     def __init__(self) -> None:
         self._sources = ARABIC_NEWS_SOURCES
+        
+        self._cleaner = ArabicNewsCleaner(remove_numbers=False, keep_quotes=True)
+        self._normalizer = ArabicNormalizer()
+        self._tokenizer = ArabicTokenizer()
+        self._stop_filter = ArabicStopwordFilter(extra_stopwords=ARABIC_STOPWORDS)
+        self._scorer = HeuristicScorer()
+        
+        self._deduplicator = ArticleDeduplicator(similarity_threshold=0.82)
+        self._grouper = StoryGrouper(overlap_threshold=0.18)
+        self._warmed_up = False
+
+    async def _warm_up_processors(self, session: AsyncSession) -> None:
+        if self._warmed_up:
+            return
+
+        cutoff = datetime.utcnow() - timedelta(hours=72)
+        stmt = (
+            select(ArticleORM)
+            .where(ArticleORM.scraped_at >= cutoff)
+            .order_by(ArticleORM.id.asc())
+        )
+        result = await session.execute(stmt)
+        recent_articles = result.scalars().all()
+
+        for art in recent_articles:
+            if art.content:
+                self._deduplicator.seed_known_article(str(art.id), art.content)
+            elif art.title:
+                self._deduplicator.seed_known_article(str(art.id), art.title)
+
+            if art.cluster_id and art.content_clean:
+                tokens = self._tokenizer.tokenize(art.content_clean)
+                filtered = self._stop_filter.filter(tokens)
+                self._grouper.seed_cluster_anchor(art.cluster_id, filtered)
+
+        self._warmed_up = True
+        logger.info("processors_warmed_up", loaded_count=len(recent_articles))
 
     async def fetch_all(
         self,
@@ -26,6 +71,8 @@ class SourceManager:
         age_hours: int = 48,
         scrape_full_content: bool = True,
     ) -> List[ArticleORM]:
+        await self._warm_up_processors(session)
+        
         cutoff = datetime.utcnow() - timedelta(hours=age_hours)
 
         rss_fetcher = RSSFetcher(timeout=settings.fetch_timeout_seconds)
@@ -111,22 +158,56 @@ class SourceManager:
             if url in existing_urls:
                 continue
             
-            existing_urls.add(url)
+            if not is_arabic_text(raw.title + " " + (raw.content or "")):
+                continue
+
+            cleaned_title = self._cleaner.clean(raw.title)
+            normalized_title = self._normalizer.normalize(cleaned_title)
+
+            cleaned_content = self._cleaner.clean(raw.content or "")
+            normalized_content = self._normalizer.normalize(cleaned_content)
+
+            tokens = self._tokenizer.tokenize(normalized_content)
+            filtered_tokens = self._stop_filter.filter(tokens)
+
+            is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
+            if is_dup:
+                continue
             
-            article = ArticleORM(
+            existing_urls.add(url)
+
+            temp_article_payload = {
+                "url": raw.url,
+                "title": raw.title,
+                "tokens": filtered_tokens
+            }
+            assigned_cluster_id = self._grouper.add_to_cluster(temp_article_payload, filtered_tokens)
+
+            scores = self._scorer.evaluate_article(
+                source_name=raw.source_name,
+                raw_text=raw.content or "",
+                tokens=filtered_tokens
+            )
+
+            article_orm = ArticleORM(
                 url=raw.url,
                 source_name=raw.source_name,
                 title=raw.title,
                 content=raw.content,
+                title_clean=normalized_title,
+                content_clean=normalized_content,
+                cluster_id=assigned_cluster_id,
+                reliability_score=scores["reliability_score"],
+                neutrality_score=scores["neutrality_score"],
+                attribution_score=scores["attribution_score"],
                 published_at=raw.published_at,
                 scraped_at=raw.scraped_at,
-                reliability_score=raw.reliability_score,
                 language=raw.language,
                 word_count=len(raw.content.split()) if raw.content else 0,
-                is_processed=False,
+                is_processed=True,
             )
-            session.add(article)
-            new_articles.append(article)
+            session.add(article_orm)
+            new_articles.append(article_orm)
             
         try:
             await session.flush()
@@ -138,32 +219,40 @@ class SourceManager:
 
         return new_articles
 
+    def preprocess_query(self, query: str) -> List[str]:
+        cleaned = self._cleaner.clean(query)
+        normalized = self._normalizer.normalize(cleaned)
+        tokens = self._tokenizer.tokenize(normalized)
+        return self._stop_filter.filter(tokens)
+
     async def search_articles(
-        self,
-        session: AsyncSession,
-        query: str,
-        time_window_hours: int = 48,
-        limit: int = 200,
-    ) -> List[ArticleORM]:
+            self,
+            session: AsyncSession,
+            query: str,
+            time_window_hours: int = 48,
+            limit: int = 200,
+        ) -> List[ArticleORM]:
+            cutoff = datetime.utcnow() - timedelta(hours=time_window_hours)
+            tokens = self.preprocess_query(query)
 
-        cutoff = datetime.utcnow() - timedelta(hours=time_window_hours)
-        tokens = self._preprocessor.tokenize(query, remove_stopwords=True)
+            stmt = select(ArticleORM).where(ArticleORM.scraped_at >= cutoff)
 
-        stmt = select(ArticleORM).where(ArticleORM.fetched_at >= cutoff)
+            if tokens:
+                from sqlalchemy import and_, or_
+                token_conditions = []                
+                for token in tokens[:5]:
+                    token_conditions.append(
+                        or_(
+                            ArticleORM.title_clean.contains(token),
+                            ArticleORM.content_clean.contains(token),
+                        )
+                    )
+                
+                stmt = stmt.where(and_(*token_conditions))
 
-        if tokens:
-            from sqlalchemy import or_
-            conditions = []
-            for token in tokens[:5]:
-                conditions.extend([
-                    ArticleORM.title_clean.contains(token),
-                    ArticleORM.content_clean.contains(token),
-                ])
-            stmt = stmt.where(or_(*conditions))
-
-        stmt = stmt.order_by(ArticleORM.published_at.desc()).limit(limit)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+            stmt = stmt.order_by(ArticleORM.published_at.desc()).limit(limit)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
     def get_source_info(self) -> List[Dict[str, Any]]:
         return [

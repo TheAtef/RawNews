@@ -1,12 +1,9 @@
 from __future__ import annotations
-
-import json
 from datetime import datetime
-from typing import  List, Optional
 from db.base import Base
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Index,
-    Integer, String, Text, JSON, ForeignKey,
+    Integer, String, Text
 )
 
 class ArticleORM(Base):
@@ -17,10 +14,18 @@ class ArticleORM(Base):
     source_name = Column(String(255), nullable=False, index=True)
     title = Column(Text, nullable=False)
     content = Column(Text, nullable=True)
-    published_at = Column(DateTime, nullable=True, index=True)
-    scraped_at = Column(DateTime, default=datetime.utcnow(), nullable=False)
-    language = Column(String(10), default="ar")
+    
+    title_clean = Column(Text, nullable=True)
+    content_clean = Column(Text, nullable=True)
+    
+    cluster_id = Column(Integer, nullable=True, index=True)
     reliability_score = Column(Float, nullable=True)
+    neutrality_score = Column(Float, nullable=True)
+    attribution_score = Column(Float, nullable=True)
+    
+    published_at = Column(DateTime, nullable=True, index=True)
+    scraped_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    language = Column(String(10), default="ar")
     is_processed = Column(Boolean, default=False, index=True)
     word_count = Column(Integer, nullable=True)
 

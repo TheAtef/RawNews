@@ -137,27 +137,54 @@ class ArticleScraper:
     def _extract_text(self, html: str) -> Optional[str]:
         soup = BeautifulSoup(html, "lxml")
 
-        # Remove noise elements
         for tag in soup.find_all(
             ["script", "style", "nav", "header", "footer",
-             "aside", "form", "button", "iframe", "figure"]
+             "aside", "form", "button", "iframe", "figure", "noscript"]
         ):
             tag.decompose()
+        for noise_term in [
+            "sidebar", "menu", "footer", "header", "nav", "widget", "related",
+            "social", "trending", "comments", "tags", "tag", "topic", "theme", 
+            "category", "breadcrumb", "banner", "popular", "toolbar", "sharing",
+            "b-menu", "b-header", "b-footer", "b-sidebar", "b-nav", "ad-", "popup"
+        ]:
+            for tag in soup.find_all(class_=re.compile(noise_term, re.IGNORECASE)):
+                tag.decompose()
+            for tag in soup.find_all(id=re.compile(noise_term, re.IGNORECASE)):
+                tag.decompose()
 
-        # Try selectors
-        for selector in self.CONTENT_SELECTORS:
-            element = soup.select_one(selector)
-            if element:
-                text = element.get_text(separator=" ", strip=True)
-                if len(text) > 200:
-                    return re.sub(r"\s+", " ", text).strip()
+        content_selectors = [
+            ".article__text", ".b-article__text", "div.article-text",
+            ".wysiwyg--all-content", "div.wysiwyg",
+            "article.article-body", "div.article-content", "div.article-body",
+            "article", "main"
+        ]
 
-        # Fallback: largest text block
-        paragraphs = soup.find_all("p")
+        main_container = None
+        for selector in content_selectors:
+            container = soup.select_one(selector)
+            if container:
+                if len(container.get_text(strip=True)) > 200:
+                    main_container = container
+                    break
+
+        if not main_container:
+            main_container = soup.find("body") or soup
+
+        paragraphs = main_container.find_all("p")
         if paragraphs:
-            text_blocks = [p.get_text(separator=" ", strip=True) for p in paragraphs]
-            combined = " ".join(b for b in text_blocks if len(b) > 30)
-            if len(combined) > 200:
+            text_blocks = []
+            for p in paragraphs:
+                p_text = p.get_text(separator=" ", strip=True)
+                if len(p_text) > 35:
+                    text_blocks.append(p_text)
+            
+            combined = " ".join(text_blocks)
+            if len(combined) > 150:
                 return re.sub(r"\s+", " ", combined).strip()
+
+        direct_text = main_container.get_text(separator=" ", strip=True)
+        if len(direct_text) > 150:
+            return re.sub(r"\s+", " ", direct_text).strip()
 
         return None
