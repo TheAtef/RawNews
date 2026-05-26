@@ -1,4 +1,4 @@
-# test_live_search_pipeline.py
+# test_google_news_pipeline.py
 import asyncio
 import sys
 from sqlalchemy import select
@@ -8,27 +8,28 @@ from engine.manager import SourceManager
 from models.orm import ArticleORM
 
 
-async def run_live_search_pipeline(query: str):
+async def run_google_news_pipeline(query: str, time_window:str, limit:int, scrape_full_content:bool):
     print("1. Re-initializing database schemas to ensure a clean slate...")
     await drop_db()
     await init_db()
     
     manager = SourceManager()
     
-    print("\n2. Launching live scraper across internet sources...")
-    print("Connecting to RSS feeds, parsing HTML content, and running preprocessing pipeline...")
+    print("\n2. Launching live scraper from Google News...")
+    print("Connecting to Google News, parsing HTML content, and running preprocessing pipeline...")
     print("This may take 15-30 seconds depending on network connections...")
     
     async with AsyncSessionLocal() as session:
         try:
-            scraped_articles = await manager.fetch_all(
-                session=session,
-                max_per_source=10,
-                age_hours=24, 
-                scrape_full_content=True
+            scraped_articles = await manager.search_google_news(
+                query=query,
+                time_window=time_window,
+                limit=limit,
+                scrape_full_content=scrape_full_content,
+                session=session
             )
             await session.commit()
-            print(f"\nScraping complete. Preprocessed and saved {len(scraped_articles)} live articles.")
+            print(f"\nScraping complete. Preprocessed and saved {len(scraped_articles)} google articles.")
         except Exception as e:
             print(f"Failed to scrape data from internet: {e}")
             await session.rollback()
@@ -113,4 +114,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         search_keyword = " ".join(sys.argv[1:])
 
-    asyncio.run(run_live_search_pipeline(search_keyword))
+    asyncio.run(run_google_news_pipeline(search_keyword, time_window="7d", limit=10, scrape_full_content=True))

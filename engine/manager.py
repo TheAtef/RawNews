@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import newspaper
 import cloudscraper
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import NewsSourceConfig, settings
@@ -236,10 +236,9 @@ class SourceManager:
             cutoff = datetime.utcnow() - timedelta(hours=time_window_hours)
             tokens = self.preprocess_query(query)
 
-            stmt = select(ArticleORM).where(ArticleORM.scraped_at >= cutoff)
+            stmt = select(ArticleORM).where(ArticleORM.published_at >= cutoff)
 
             if tokens:
-                from sqlalchemy import and_, or_
                 token_conditions = []                
                 for token in tokens[:5]:
                     token_conditions.append(
@@ -268,7 +267,13 @@ class SourceManager:
             for s in self._sources
         ]
         
-    async def search_google_news(self, query: str, time_window: str = "7d", limit: int = 20, scrape_full_content: bool = True) -> List[RawArticle]:
+    async def search_google_news(
+        self, 
+        query: str, 
+        time_window: str = "7d", 
+        limit: int = 20, 
+        scrape_full_content: bool = True,
+        session: Optional[AsyncSession] = None) -> List[RawArticle]:
         google_news = GoogleNews(query=query, time_window = time_window, limit=limit, scrape_full_content=scrape_full_content)
         entries = await google_news.fetch_news()
         scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
@@ -293,9 +298,12 @@ class SourceManager:
                     scraped_at= datetime.utcnow(),
                     reliability_score=None,
                     language='ar',
-                )       
+                )
                 articles.append(article)
+                logger.info("google_news_article_fetched", title=entry.title, url=entry.link)
             except Exception as e:
                 logger.error("google_news_article_error", url=entry.link, error=str(e))
                 continue
+        if session:
+            await self._persist_articles(session=session, raw_articles=articles)
         return articles
