@@ -21,6 +21,7 @@ from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
 from preprocessing.deduplicator import ArticleDeduplicator
 from preprocessing.analyzer import HeuristicScorer, StoryGrouper
 from preprocessing.utils import is_arabic_text
+from preprocessing.ner import NER
 
 logger = structlog.get_logger(__name__)
 
@@ -33,9 +34,12 @@ class SourceManager:
         self._tokenizer = ArabicTokenizer()
         self._stop_filter = ArabicStopwordFilter(extra_stopwords=ARABIC_STOPWORDS)
         self._scorer = HeuristicScorer()
+        self._ner=NER()
+
         
         self._deduplicator = ArticleDeduplicator(similarity_threshold=0.82)
         self._grouper = StoryGrouper(overlap_threshold=0.18)
+
         self._warmed_up = False
 
     async def _warm_up_processors(self, session: AsyncSession) -> None:
@@ -167,6 +171,7 @@ class SourceManager:
 
             cleaned_content = self._cleaner.clean(raw.content or "")
             normalized_content = self._normalizer.normalize(cleaned_content)
+            entities=self._ner.extract_entities(cleaned_content)
 
             tokens = self._tokenizer.tokenize(normalized_content)
             filtered_tokens = self._stop_filter.filter(tokens)
@@ -189,7 +194,6 @@ class SourceManager:
                 raw_text=raw.content or "",
                 tokens=filtered_tokens
             )
-
             article_orm = ArticleORM(
                 url=raw.url,
                 source_name=raw.source_name,
@@ -197,6 +201,13 @@ class SourceManager:
                 content=raw.content,
                 title_clean=normalized_title,
                 content_clean=normalized_content,
+
+                persons=entities["person"],
+                organizations=entities["organization"],
+                locations=entities["location"],
+                misc=entities["misc"],
+
+                
                 cluster_id=assigned_cluster_id,
                 reliability_score=scores["reliability_score"],
                 neutrality_score=scores["neutrality_score"],

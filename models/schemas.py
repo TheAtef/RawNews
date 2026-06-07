@@ -16,6 +16,10 @@ class ArticleSchema(BaseModel):
     propaganda_score: Optional[float] = None
     reliability_score: Optional[float] = None
     word_count: Optional[int] = None
+    persons: List[str] = []
+    organizations: List[str] = []
+    locations: List[str] = []
+    misc: List[str] = []
 
     class Config:
         from_attributes = True
