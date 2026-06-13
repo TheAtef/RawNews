@@ -3,7 +3,7 @@ from datetime import datetime
 from db.base import Base
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Index,
-    Integer, String, Text,JSON
+    Integer, String, Text, JSON
 )
 
 class ArticleORM(Base):
@@ -18,17 +18,21 @@ class ArticleORM(Base):
     title_clean = Column(Text, nullable=True)
     content_clean = Column(Text, nullable=True)
     
-    persons=Column(JSON, nullable=True)
-    organizations=Column(JSON, nullable=True)
-    locations=Column(JSON, nullable=True)
-    misc=Column(JSON, nullable=True)
+    persons = Column(JSON, nullable=True)
+    organizations = Column(JSON, nullable=True)
+    locations = Column(JSON, nullable=True)
+    misc = Column(JSON, nullable=True)
     
     cluster_id = Column(Integer, nullable=True, index=True)
     reliability_score = Column(Float, nullable=True)
     neutrality_score = Column(Float, nullable=True)
     attribution_score = Column(Float, nullable=True)
-
     
+    propaganda_label = Column(String(50), nullable=True)      
+    statement_type = Column(String(50), nullable=True)         
+    attribution_label = Column(String(100), nullable=True)      
+    verified = Column(Boolean, default=False, nullable=False)
+
     published_at = Column(DateTime, nullable=True, index=True)
     scraped_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     language = Column(String(10), default="ar")

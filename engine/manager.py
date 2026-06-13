@@ -19,7 +19,7 @@ from preprocessing.cleaner import ArabicNewsCleaner
 from preprocessing.normalizer import ArabicNormalizer
 from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
 from preprocessing.deduplicator import ArticleDeduplicator
-from preprocessing.analyzer import HeuristicScorer, StoryGrouper
+from preprocessing.analyzer import HeuristicScorer, StoryGrouper, AraBERTClassifier
 from preprocessing.utils import is_arabic_text
 from preprocessing.ner import NER
 
@@ -33,13 +33,13 @@ class SourceManager:
         self._normalizer = ArabicNormalizer()
         self._tokenizer = ArabicTokenizer()
         self._stop_filter = ArabicStopwordFilter(extra_stopwords=ARABIC_STOPWORDS)
-        self._scorer = HeuristicScorer()
-        self._ner=NER()
-
         
+        self._scorer = HeuristicScorer()
+        self._classifier = AraBERTClassifier()
+        self._grouper = StoryGrouper()
+        
+        self._ner = NER()
         self._deduplicator = ArticleDeduplicator(similarity_threshold=0.82)
-        self._grouper = StoryGrouper(overlap_threshold=0.18)
-
         self._warmed_up = False
 
     async def _warm_up_processors(self, session: AsyncSession) -> None:
@@ -56,15 +56,14 @@ class SourceManager:
         recent_articles = result.scalars().all()
 
         for art in recent_articles:
+      
             if art.content:
-                self._deduplicator.seed_known_article(str(art.id), art.content)
+                self._deduplicator.seed_known_article(art.url, art.content)
             elif art.title:
-                self._deduplicator.seed_known_article(str(art.id), art.title)
+                self._deduplicator.seed_known_article(art.url, art.title)
 
             if art.cluster_id and art.content_clean:
-                tokens = self._tokenizer.tokenize(art.content_clean)
-                filtered = self._stop_filter.filter(tokens)
-                self._grouper.seed_cluster_anchor(art.cluster_id, filtered)
+                self._grouper.seed_cluster_anchor(art.cluster_id, art.content_clean)
 
         self._warmed_up = True
         logger.info("processors_warmed_up", loaded_count=len(recent_articles))
@@ -171,7 +170,7 @@ class SourceManager:
 
             cleaned_content = self._cleaner.clean(raw.content or "")
             normalized_content = self._normalizer.normalize(cleaned_content)
-            entities=self._ner.extract_entities(cleaned_content)
+            entities = self._ner.extract_entities(cleaned_content)
 
             tokens = self._tokenizer.tokenize(normalized_content)
             filtered_tokens = self._stop_filter.filter(tokens)
@@ -182,18 +181,22 @@ class SourceManager:
             
             existing_urls.add(url)
 
-            temp_article_payload = {
-                "url": raw.url,
-                "title": raw.title,
-                "tokens": filtered_tokens
-            }
-            assigned_cluster_id = self._grouper.add_to_cluster(temp_article_payload, filtered_tokens)
+            assigned_cluster_id = self._grouper.add_to_cluster(normalized_content)
+
+            classifications = self._classifier.classify(normalized_content, raw.title, filtered_tokens)
 
             scores = self._scorer.evaluate_article(
                 source_name=raw.source_name,
                 raw_text=raw.content or "",
                 tokens=filtered_tokens
             )
+
+            is_verified = (
+                scores["reliability_score"] >= 0.70 and 
+                classifications["attribution_label"] == "supported_claim" and 
+                classifications["propaganda_label"] != "propaganda"
+            )
+
             article_orm = ArticleORM(
                 url=raw.url,
                 source_name=raw.source_name,
@@ -206,12 +209,18 @@ class SourceManager:
                 organizations=entities["organization"],
                 locations=entities["location"],
                 misc=entities["misc"],
-
                 
                 cluster_id=assigned_cluster_id,
+                
                 reliability_score=scores["reliability_score"],
                 neutrality_score=scores["neutrality_score"],
                 attribution_score=scores["attribution_score"],
+                
+                propaganda_label=classifications["propaganda_label"],
+                statement_type=classifications["statement_type"],
+                attribution_label=classifications["attribution_label"],
+                verified=is_verified,
+
                 published_at=raw.published_at,
                 scraped_at=raw.scraped_at,
                 language=raw.language,
@@ -238,32 +247,32 @@ class SourceManager:
         return self._stop_filter.filter(tokens)
 
     async def search_articles(
-            self,
-            session: AsyncSession,
-            query: str,
-            time_window_hours: int = 48,
-            limit: int = 200,
-        ) -> List[ArticleORM]:
-            cutoff = datetime.utcnow() - timedelta(hours=time_window_hours)
-            tokens = self.preprocess_query(query)
+        self,
+        session: AsyncSession,
+        query: str,
+        time_window_hours: int = 48,
+        limit: int = 200,
+    ) -> List[ArticleORM]:
+        cutoff = datetime.utcnow() - timedelta(hours=time_window_hours)
+        tokens = self.preprocess_query(query)
 
-            stmt = select(ArticleORM).where(ArticleORM.published_at >= cutoff)
+        stmt = select(ArticleORM).where(ArticleORM.published_at >= cutoff)
 
-            if tokens:
-                token_conditions = []                
-                for token in tokens[:5]:
-                    token_conditions.append(
-                        or_(
-                            ArticleORM.title_clean.contains(token),
-                            ArticleORM.content_clean.contains(token),
-                        )
+        if tokens:
+            token_conditions = []                
+            for token in tokens[:5]:
+                token_conditions.append(
+                    or_(
+                        ArticleORM.title_clean.contains(token),
+                        ArticleORM.content_clean.contains(token),
                     )
-                
-                stmt = stmt.where(and_(*token_conditions))
+                )
+            
+            stmt = stmt.where(and_(*token_conditions))
 
-            stmt = stmt.order_by(ArticleORM.published_at.desc()).limit(limit)
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
+        stmt = stmt.order_by(ArticleORM.published_at.desc()).limit(limit)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     def get_source_info(self) -> List[Dict[str, Any]]:
         return [
@@ -284,15 +293,18 @@ class SourceManager:
         time_window: str = "7d", 
         limit: int = 20, 
         scrape_full_content: bool = True,
-        session: Optional[AsyncSession] = None) -> List[RawArticle]:
-        google_news = GoogleNews(query=query, time_window = time_window, limit=limit, scrape_full_content=scrape_full_content)
+        session: Optional[AsyncSession] = None
+    ) -> List[RawArticle]:
+        google_news = GoogleNews(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
         entries = await google_news.fetch_news()
         scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
         articles: List[RawArticle] = []
         for entry in entries:
             try:
                 text = ""
-                data = newspaper.article(entry.link)
+               
+                data = await asyncio.to_thread(newspaper.article, entry.link)
+                
                 if hasattr(data, 'text_cleaned') and data.text_cleaned != "":
                     text = data.text_cleaned
                 elif hasattr(data, 'text') and data.text != "":
@@ -305,8 +317,8 @@ class SourceManager:
                     title=entry.title.rsplit(' - ', 1)[0],
                     content=text,
                     source_name=entry.source.title,
-                    published_at= datetime.strptime(entry.published, "%a, %d %b %Y %H:%M:%S GMT"),
-                    scraped_at= datetime.utcnow(),
+                    published_at=datetime.strptime(entry.published, "%a, %d %b %Y %H:%M:%S GMT"),
+                    scraped_at=datetime.utcnow(),
                     reliability_score=None,
                     language='ar',
                 )

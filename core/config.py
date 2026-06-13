@@ -31,7 +31,22 @@ class Settings(BaseSettings):
     max_articles_per_source: int = 50
     article_max_age_hours: int = 48
     fetch_concurrency: int = 8
-    blocked_websites:List[str] = ["www.syriahr.com", "www.reuters.com"]
+    blocked_websites: List[str] = ["www.syriahr.com", "www.reuters.com"]
+    
+    device: str = "cuda"  
+    
+    # arabert configurations for analysis and clustering
+    embedding_model_id: str = "aubmindlab/bert-base-arabertv2"
+    sentiment_model_id: str = "./train/models/fine_tuned_arabert_propaganda"
+
+    # gemma 2 configuration strictly for summarization
+    gemma_model_id: str = "google/gemma-2-9b-it"
+    gemma_api_url: str = "http://localhost:11434/v1" 
+    gemma_api_key: str = "ollama"
+    use_local_gemma_pipeline: bool = False  
+    
+    # clustering Parameters
+    clustering_similarity_threshold: float = 0.82  
     
     api_host: str = "0.0.0.0"
     api_port: int = 8000
