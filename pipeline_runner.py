@@ -1,6 +1,15 @@
 # search_pipeline.py
 from __future__ import annotations
 
+import collections
+import collections.abc
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
+
 import asyncio
 import structlog
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -15,7 +24,7 @@ from engine.synthesizer import NewsSynthesizer
 
 structlog.configure(
     processors=[
-        structlog.processors.TimeStamps(fmt="YYYY-MM-DD HH:mm:ss"),
+        structlog.processors.TimeStamper(fmt="YYYY-MM-DD HH:mm:ss"),
         structlog.processors.add_log_level,
         structlog.processors.JSONRenderer()
     ]

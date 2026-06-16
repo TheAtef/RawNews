@@ -12,3 +12,7 @@ structlog==25.5.0
 uvicorn==0.47.0
 torch==2.12.0
 transformers==5.10.2
+evaluate==0.4.6
+arabert==1.0.1
+peft==0.19.1
+trl==1.6.0
