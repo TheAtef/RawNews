@@ -1,4 +1,12 @@
 from __future__ import annotations
+import collections
+import collections.abc
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
 import sys
 import os
 import torch
@@ -11,6 +19,9 @@ from transformers import (
     Trainer
 )
 
+
+script_dir = os.path.dirname(os.path.realpath(__file__))
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from train.prepare_data import load_file_to_df, prepare_single_dataset
@@ -18,8 +29,8 @@ from train.prepare_data import load_file_to_df, prepare_single_dataset
 def run_classifier_training(
     task_name: str, 
     num_labels: int,
-    train_path: str = "./balanced_train_sentences.jsonl",
-    test_path: str = "./clean_test_sentences.jsonl"
+    train_path: str = os.path.join(script_dir, "balanced_clean_fr.jsonl"), #"./balanced_clean_fr.jsonl",
+    test_path: str = os.path.join(script_dir, "clean_test_sentences.jsonl") # "./clean_test_sentences.jsonl"
 ):
     model_name = "aubmindlab/bert-base-arabertv02"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
