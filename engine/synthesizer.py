@@ -14,24 +14,26 @@ logger = structlog.get_logger(__name__)
 class NewsSynthesizer:
     def __init__(self) -> None:
         self.use_local = settings.use_local_gemma_pipeline
-        self.api_url = f"{settings.gemma_api_url}/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {settings.gemma_api_key}",
-            "Content-Type": "application/json"
-        }
-        
         self.tokenizer = None
         self.model = None
-
-    def _init_local_pipeline(self) -> None:
         if self.tokenizer is None or self.model is None:
             logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
             self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
             self.model = AutoModelForCausalLM.from_pretrained(
                 settings.gemma_model_id,
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto"
+                device_map="cuda"
             )
+
+    # def _init_local_pipeline(self) -> None:
+    #     if self.tokenizer is None or self.model is None:
+    #         logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
+    #         self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
+    #         self.model = AutoModelForCausalLM.from_pretrained(
+    #             settings.gemma_model_id,
+    #             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+    #             device_map="cuda"
+    #         )
 
     def _build_prompt(self, articles_content: List[str]) -> str:
         # Combine different viewpoints into a unified structure
@@ -62,7 +64,7 @@ class NewsSynthesizer:
 
         if self.use_local:
             try:
-                self._init_local_pipeline()
+                # self._init_local_pipeline()
                 inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
                 with torch.no_grad():
                     outputs = self.model.generate(

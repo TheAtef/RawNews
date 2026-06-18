@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from db.session import AsyncSessionLocal, init_db, drop_db
 from engine.manager import SourceManager
+from engine.retriever import Retriever
 from models.orm import ArticleORM
 
 
@@ -14,6 +15,7 @@ async def run_live_search_pipeline(query: str):
     await init_db()
     
     manager = SourceManager()
+    retriever = Retriever()
     
     print("\n2. Launching live scraper across internet sources...")
     print("Connecting to RSS feeds, parsing HTML content, and running preprocessing pipeline...")
@@ -39,7 +41,7 @@ async def run_live_search_pipeline(query: str):
             return
 
         print(f"\n3. Preprocessing search query and searching matching text for: '{query}'...")
-        matched_articles = await manager.search_articles(
+        matched_articles = await retriever.search_articles(
             session=session,
             query=query,
             time_window_hours=24,
