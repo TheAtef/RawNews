@@ -15,7 +15,7 @@ from engine.synthesizer import NewsSynthesizer
 
 structlog.configure(
     processors=[
-        structlog.processors.TimeStamps(fmt="YYYY-MM-DD HH:mm:ss"),
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),      
         structlog.processors.add_log_level,
         structlog.processors.JSONRenderer()
     ]
