@@ -3,8 +3,9 @@ from datetime import datetime
 from db.base import Base
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Index,
-    Integer, String, Text, JSON
+    Integer, String, Text, JSON,ForeignKey
 )
+from sqlalchemy.orm import relationship
 
 class ArticleORM(Base):
     __tablename__ = "articles"
@@ -43,3 +44,46 @@ class ArticleORM(Base):
         Index("idx_articles_source_published", "source_name", "published_at"),
         Index("idx_articles_processed_scraped", "is_processed", "scraped_at"),
     )
+    feedbacks=relationship("ArticleFeedbackORM",back_populates="article")
+class ArticleFeedbackORM(Base):
+    __tablename__ = "article_feedback"
+    id = Column(Integer, primary_key=True)
+    article_id = Column(Integer, ForeignKey("articles.id"), nullable=True)
+
+    propaganda_prediction = Column(String(50),nullable=True)
+    statement_prediction = Column(String(50),nullable=True)
+    attribution_prediction = Column(String(100),nullable=True)
+
+    propaganda_correct = Column(Boolean,nullable=True)
+    corrected_propaganda = Column(String(50),nullable=True)
+
+    statement_correct = Column(Boolean,nullable=True)
+    corrected_statement = Column(String(50),nullable=True)
+
+    attribution_correct = Column(Boolean, nullable=True)
+    corrected_attribution = Column(String(100), nullable=True)
+
+    notes=Column(String,nullable=True)
+
+    article = relationship("ArticleORM",back_populates="feedbacks")
+
+    # summary_text = Column(Text, nullable=False)
+    # user_rating = Column(Boolean, nullable=False)
+    # feedback_reason = Column(String(100), nullable=True)
+    # corrected_summary = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SummaryFeedbackORM(Base):
+    __tablename__="summary_feedback"
+    id=Column(Integer,primary_key=True)
+    query=Column(String(255),nullable=True)
+
+    generated_summary=Column(Text,nullable=False)
+    user_rating=Column(Boolean,nullable=False)
+    feedback_reason=Column(String(100),nullable=True)
+
+    corrected_summary=Column(Text,nullable=True)
+
+    created_at=Column(DateTime,default=datetime.utcnow)

@@ -37,3 +37,31 @@ class HealthResponse(BaseModel):
     version: str
     db_connected: bool
     total_articles: int
+
+class ArticleFeedbackSchema(BaseModel):
+    article_id:int
+    propaganda_prediction: Optional[str] = None
+    statement_prediction: Optional[str] = None
+    attribution_prediction: Optional[str] = None
+
+    propaganda_correct: Optional[bool] = None
+    corrected_propaganda: Optional[str] = None
+
+    statement_correct: Optional[bool] = None
+    corrected_statement: Optional[str] = None
+
+    attribution_correct: Optional[bool] = None
+    corrected_attribution: Optional[str] = None
+
+    notes: Optional[str] = None
+
+
+class SummaryFeedbackSchemma(BaseModel):
+    query: Optional[str] = None
+    # cluster_id: Optional[int] = None
+    # article_id: Optional[int] = None
+    generated_summary: str
+    user_rating: bool
+    feedback_reason: Optional[str] = None
+    corrected_summary: Optional[str] = None
+    # model_name: Optional[str] = None

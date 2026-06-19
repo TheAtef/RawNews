@@ -41,8 +41,8 @@ from core.config import settings
 from db.session import get_db, init_db
 from engine.manager import SourceManager
 
-from models.orm import ArticleORM
-from models.schemas import ArticleSchema, HealthResponse, SourceInfo
+from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM
+from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma
 from utils.logging import configure_logging
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
@@ -290,6 +290,61 @@ async def search_news(
 ) -> Dict[str, Any]:
     new_articles = await source_manager.search_google_news(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
     return {"status": "search_done", "config": {"query": query, "time_window": time_window, "limit": limit}, "count": len(new_articles), "results": [{"title": a.title, "content": a.content, "source": a.source_name, "url": a.url, "published_at": a.published_at, "scraped_at": a.scraped_at, "language": a.language} for a in new_articles ]}
+@app.post(
+    "/article_feedback"
+)
+async def save_article_feedbac(
+    feedback:ArticleFeedbackSchema,
+    db:AsyncSession=Depends(get_db)
+):
+    item=ArticleFeedbackORM(
+        article_id=feedback.article_id,
+
+        propaganda_prediction=feedback.propaganda_prediction,
+        statement_prediction=feedback.statement_prediction,
+        attribution_prediction=feedback.attribution_prediction,
+
+        propaganda_correct=feedback.propaganda_correct,
+        corrected_propaganda=feedback.corrected_propaganda,
+
+        statement_correct=feedback.statement_correct,
+        corrected_statement=feedback.corrected_statement,
+
+        attribution_correct=feedback.attribution_correct,
+        corrected_attribution=feedback.corrected_attribution,
+
+        notes=feedback.notes
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    return{
+        "status":"saved",
+        "feedback_id":item.id
+    }
+@app.post(
+    "/summary_feedback"
+)
+async def save_summary_feedback(
+    feedback:SummaryFeedbackSchemma,
+    db:AsyncSession=Depends(get_db)
+):
+    item=SummaryFeedbackORM(
+         query=feedback.query,
+        generated_summary=feedback.generated_summary,
+        user_rating=feedback.user_rating,
+        feedback_reason=feedback.feedback_reason,
+        corrected_summary=feedback.corrected_summary
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    return{
+        "status":"saved",
+        "feedback_id":item.id
+    }
 
 
 
