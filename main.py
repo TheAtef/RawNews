@@ -15,7 +15,14 @@ Background tasks:
 
 from __future__ import annotations
 
-from collections.abc import MutableSet
+import collections
+import collections.abc
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
 
 import asyncio
 from contextlib import asynccontextmanager

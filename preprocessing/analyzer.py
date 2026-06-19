@@ -26,7 +26,7 @@ ATTRIBUTION_MARKERS: List[str] = [
 
 class AraBERTClassifier:
     def __init__(self) -> None:
-        self.device = 0 if settings.device == "cuda" and torch.cuda.is_available() else -1
+        self.device = 0 if settings.device == "cuda" and torch.cuda.is_available() else -1            
         try:
             self.sentiment_pipe = pipeline(
                 "sentiment-analysis",
@@ -148,7 +148,6 @@ class StoryGrouper:
     def __init__(self, similarity_threshold: Optional[float] = None) -> None:
         self.threshold = similarity_threshold or settings.clustering_similarity_threshold
         self.device = "cuda" if settings.device == "cuda" and torch.cuda.is_available() else "cpu"
-        
         self.tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_id)
         self.model = AutoModel.from_pretrained(settings.embedding_model_id).to(self.device)
         self.model.eval()

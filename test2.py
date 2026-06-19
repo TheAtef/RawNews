@@ -1,4 +1,14 @@
 # test_google_news_pipeline.py
+import collections
+import collections.abc
+
+from engine.retriever import Retriever
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
 import asyncio
 import sys
 from sqlalchemy import select
@@ -8,12 +18,14 @@ from engine.manager import SourceManager
 from models.orm import ArticleORM
 
 
+
 async def run_google_news_pipeline(query: str, time_window:str, limit:int, scrape_full_content:bool):
     print("1. Re-initializing database schemas to ensure a clean slate...")
     await drop_db()
     await init_db()
     
     manager = SourceManager()
+    retriever = Retriever()
     
     print("\n2. Launching live scraper from Google News...")
     print("Connecting to Google News, parsing HTML content, and running preprocessing pipeline...")
@@ -40,10 +52,10 @@ async def run_google_news_pipeline(query: str, time_window:str, limit:int, scrap
             return
 
         print(f"\n3. Preprocessing search query and searching matching text for: '{query}'...")
-        matched_articles = await manager.search_articles(
+        matched_articles = await retriever.search_articles(
             session=session,
             query=query,
-            time_window_hours=24,
+            time_window_hours=24 * 7,
             limit=10
         )
 
@@ -82,7 +94,7 @@ async def run_google_news_pipeline(query: str, time_window:str, limit:int, scrap
 
             if cluster_id is None:
                 print("\nThis matching article does not belong to any cluster (no similar reports were found).")
-                return
+                continue
 
             print(f"\nRetrieving similar articles grouped under Cluster ID #{cluster_id}...")
             cluster_stmt = (
@@ -109,9 +121,9 @@ async def run_google_news_pipeline(query: str, time_window:str, limit:int, scrap
 
 
 if __name__ == "__main__":
-    search_keyword = "الشرع"
+    search_keyword = "حسان عقاد"
     
     if len(sys.argv) > 1:
         search_keyword = " ".join(sys.argv[1:])
 
-    asyncio.run(run_google_news_pipeline(search_keyword, time_window="7d", limit=10, scrape_full_content=True))
+    asyncio.run(run_google_news_pipeline(search_keyword, time_window="7d", limit=15, scrape_full_content=True))

@@ -5,8 +5,19 @@ from core.config import NewsSourceConfig
 
 ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
     NewsSourceConfig(
-        name="Al Jazeera Arabic",
+        name="Al Jazeera",
         name_ar="الجزيرة",
+        rss_urls=[
+            "https://www.aljazeera.net/aljazeerarss/all.xml",
+        ],
+        base_url="https://www.aljazeera.net",
+        reliability_score=0.78,
+        political_lean="center-left",
+        region="Qatar",
+    ),
+    NewsSourceConfig(
+        name="Al Jazeera",
+        name_ar="الجزيرة نت",
         rss_urls=[
             "https://www.aljazeera.net/aljazeerarss/all.xml",
         ],
@@ -25,17 +36,17 @@ ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
         region="Saudi Arabia",
     ),
     NewsSourceConfig(
-        name="RT Arabic", 
-        name_ar="آر تي عربي",
+        name="RT", 
+        name_ar="آر تي",
         rss_urls=["https://arabic.rt.com/rss/"],
         base_url="https://arabic.rt.com",
         reliability_score=0.45,
-        political_lean="state",
+        political_lean="right",
         region="Russia",
     ),
     NewsSourceConfig(
-        name="BBC Arabic",
-        name_ar="بي بي سي عربي",
+        name="BBC",
+        name_ar="بي بي سي",
         rss_urls=["https://www.bbc.com/arabic/index.xml"], 
         base_url="https://www.bbc.com/arabic",
         reliability_score=0.90,
@@ -43,8 +54,8 @@ ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
         region="UK",
     ),
     NewsSourceConfig(
-        name="CNN Arabic",
-        name_ar="سي إن إن عربي",
+        name="CNN",
+        name_ar="سي إن إن",
         rss_urls=["https://arabic.cnn.com/api/v1/rss/rss.xml"], 
         base_url="https://arabic.cnn.com/",
         reliability_score=0.80,
@@ -52,8 +63,8 @@ ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
         region="US",
     ),
     NewsSourceConfig(
-        name="DW Arabic",
-        name_ar="DW عربي",
+        name="DW",
+        name_ar="DW",
         rss_urls=["https://rss.dw.com/atom/rss-ar-all"], 
         base_url="https://www.dw.com/ar",
         reliability_score=0.60,
@@ -105,7 +116,7 @@ ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
         rss_urls=["https://sana.sy/feed/"], 
         base_url="https://sana.sy/",
         reliability_score=0.70,
-        political_lean="state",
+        political_lean="right",
         region="Syria",
     ),
     NewsSourceConfig(
@@ -161,5 +172,32 @@ ARABIC_NEWS_SOURCES: List[NewsSourceConfig] = [
         reliability_score=0.65,
         political_lean="center-left",
         region="Qatar",
+    ),
+    NewsSourceConfig(
+        name="Aawsat",
+        name_ar="الشرق الأوسط",
+        rss_urls=["https://aawsat.com/feed"], 
+        base_url="https://aawsat.com",
+        reliability_score=0.70,
+        political_lean="center-right",
+        region="Saudi Arabia",
+    ),
+    NewsSourceConfig(
+        name="Youm7",
+        name_ar="اليوم السابع",
+        rss_urls=["https://www.youm7.com/rss/SectionRss?SectionID=203"], 
+        base_url="https://www.youm7.com/",
+        reliability_score=0.40,
+        political_lean="right",
+        region="Egypt",
+    ),
+    NewsSourceConfig(
+        name="UAE Ministry of Foreign Affairs",
+        name_ar="وزارة الخارجية الإماراتية",
+        rss_urls=[], 
+        base_url="https://www.mofa.gov.ae/ar-ae",
+        reliability_score=0.45,
+        political_lean="right",
+        region="UAE",
     ),
 ]
