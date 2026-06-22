@@ -41,7 +41,7 @@ from core.config import settings
 from db.session import get_db, init_db
 from engine.manager import SourceManager
 
-from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM
+from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus
 from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma
 from utils.logging import configure_logging
 configure_logging(settings.log_level)
@@ -344,6 +344,66 @@ async def save_summary_feedback(
     return{
         "status":"saved",
         "feedback_id":item.id
+    }
+@app.patch("/article-feedback/{feedback_id}/status")
+async def article_feedback_status(
+    feedback_id: int,
+    status:FeedbackStatus ,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(ArticleFeedbackORM)
+        .where(ArticleFeedbackORM.id == feedback_id)
+    )
+
+    feedback = result.scalar_one_or_none()
+
+    if feedback is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Feedback not found"
+        )
+
+    feedback.status = status.status
+    feedback.admin_notes = status.admin_notes
+
+    await db.commit()
+    await db.refresh(feedback)
+
+    return {
+        "message": "Feedback updated successfully",
+        "status": feedback.status
+    }
+
+
+@app.patch("/summary-feedback/{feedback_id}/status")
+async def summary_feedback_status(
+    feedback_id: int,
+    status: FeedbackStatus,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(SummaryFeedbackORM)
+        .where(SummaryFeedbackORM.id == feedback_id)
+    )
+
+    feedback = result.scalar_one_or_none()
+
+    if feedback is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Feedback not found"
+        )
+
+    feedback.status = status.status
+    feedback.admin_notes = status.admin_notes
+
+    await db.commit()
+    await db.refresh(feedback)
+
+    return {
+        "message": "Feedback updated successfully",
+        "status": feedback.status
     }
 
 

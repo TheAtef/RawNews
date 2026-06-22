@@ -1,9 +1,10 @@
 from __future__ import annotations
 from datetime import datetime
 from db.base import Base
+from enum import Enum as pyenum
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Index,
-    Integer, String, Text, JSON,ForeignKey
+    Integer, String, Text, JSON,ForeignKey,Enum
 )
 from sqlalchemy.orm import relationship
 
@@ -45,10 +46,18 @@ class ArticleORM(Base):
         Index("idx_articles_processed_scraped", "is_processed", "scraped_at"),
     )
     feedbacks=relationship("ArticleFeedbackORM",back_populates="article")
+
+class FeedbackStatus(pyenum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class ArticleFeedbackORM(Base):
     __tablename__ = "article_feedback"
     id = Column(Integer, primary_key=True)
     article_id = Column(Integer, ForeignKey("articles.id"), nullable=True)
+
 
     propaganda_prediction = Column(String(50),nullable=True)
     statement_prediction = Column(String(50),nullable=True)
@@ -67,10 +76,12 @@ class ArticleFeedbackORM(Base):
 
     article = relationship("ArticleORM",back_populates="feedbacks")
 
-    # summary_text = Column(Text, nullable=False)
-    # user_rating = Column(Boolean, nullable=False)
-    # feedback_reason = Column(String(100), nullable=True)
-    # corrected_summary = Column(Text, nullable=True)
+    status = Column(
+        Enum(FeedbackStatus),
+        default=FeedbackStatus.PENDING,
+        nullable=False
+    )
+    admin_notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -87,3 +98,9 @@ class SummaryFeedbackORM(Base):
     corrected_summary=Column(Text,nullable=True)
 
     created_at=Column(DateTime,default=datetime.utcnow)
+    status = Column(
+        Enum(FeedbackStatus),
+        default=FeedbackStatus.PENDING,
+        nullable=False
+    )
+    admin_notes = Column(Text, nullable=True)
