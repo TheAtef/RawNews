@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
+from .orm import FeedbackStatus
 
 class ArticleSchema(BaseModel):
     id: int
@@ -66,6 +67,6 @@ class SummaryFeedbackSchemma(BaseModel):
 
     
 class FeedbackStatusSchema(BaseModel):
-    status: str
+    status: FeedbackStatus
     admin_notes: Optional[str] = None
 

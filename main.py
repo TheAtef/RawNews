@@ -42,7 +42,7 @@ from db.session import get_db, init_db
 from engine.manager import SourceManager
 
 from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus
-from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma
+from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema
 from utils.logging import configure_logging
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
@@ -293,10 +293,14 @@ async def search_news(
 @app.post(
     "/article_feedback"
 )
-async def save_article_feedbac(
+async def save_article_feedback(
     feedback:ArticleFeedbackSchema,
     db:AsyncSession=Depends(get_db)
 ):
+    article=await db.get(ArticleORM,feedback.article_id)
+    if article is None:
+        raise HTTPException(status_code=404,detail="article not found")
+
     item=ArticleFeedbackORM(
         article_id=feedback.article_id,
 
@@ -330,6 +334,10 @@ async def save_summary_feedback(
     feedback:SummaryFeedbackSchemma,
     db:AsyncSession=Depends(get_db)
 ):
+    article=await db.get(ArticleORM,feedback.article_id)
+    if article is None:
+        raise HTTPException(status_code=404,detail="article not found")
+
     item=SummaryFeedbackORM(
          query=feedback.query,
         generated_summary=feedback.generated_summary,
@@ -348,14 +356,14 @@ async def save_summary_feedback(
 @app.patch("/article-feedback/{feedback_id}/status")
 async def article_feedback_status(
     feedback_id: int,
-    status:FeedbackStatus ,
+    status:FeedbackStatusSchema ,
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
         select(ArticleFeedbackORM)
         .where(ArticleFeedbackORM.id == feedback_id)
     )
-
+    
     feedback = result.scalar_one_or_none()
 
     if feedback is None:
@@ -379,7 +387,7 @@ async def article_feedback_status(
 @app.patch("/summary-feedback/{feedback_id}/status")
 async def summary_feedback_status(
     feedback_id: int,
-    status: FeedbackStatus,
+    status: FeedbackStatusSchema,
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(

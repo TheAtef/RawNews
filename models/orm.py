@@ -99,8 +99,18 @@ class SummaryFeedbackORM(Base):
 
     created_at=Column(DateTime,default=datetime.utcnow)
     status = Column(
-        Enum(FeedbackStatus),
+        Enum(FeedbackStatus,values_callable=lambda enum: [e.value for e in enum]),
         default=FeedbackStatus.PENDING,
         nullable=False
     )
     admin_notes = Column(Text, nullable=True)
+class TrainingJobORM(Base):
+    __tablename__="training_job"
+    id=Column(Integer,primary_key=True)
+    feedback_count=Column(Integer,nullable=False)
+    accuracy=Column(Integer,nullable=False)
+    status=Column(Enum("PENDING","RUNNING","COMPLETED","FAILED",name="training_job_status"),default="PENDING",nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime,default=datetime.utcnow,nullable=False)
+
