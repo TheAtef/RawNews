@@ -1,9 +1,11 @@
 from __future__ import annotations
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 import newspaper
 import cloudscraper
+import numpy as np
 import structlog
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,7 +159,23 @@ class SourceManager:
         existing_result = await session.execute(existing_stmt)
         existing_urls = {row[0] for row in existing_result.fetchall()}
 
+        time_cutoff = datetime.utcnow() - timedelta(hours=48)
+        active_stmt = select(ArticleORM).where(
+            and_(
+                ArticleORM.published_at >= time_cutoff,
+                ArticleORM.cluster_id.is_not(None)
+            )
+        )
+        active_result = await session.execute(active_stmt)
+        active_articles = list(active_result.scalars().all())
+
+        max_id_stmt = select(ArticleORM.cluster_id).order_by(ArticleORM.cluster_id.desc()).limit(1)
+        max_id_res = await session.execute(max_id_stmt)
+        max_id_row = max_id_res.fetchone()
+        next_cluster_id = (max_id_row[0] + 1) if max_id_row and max_id_row[0] else 1
+
         new_articles: List[ArticleORM] = []
+
         for url, raw in unique_raw_map.items():
             if url in existing_urls:
                 continue
@@ -170,19 +188,76 @@ class SourceManager:
 
             cleaned_content = self._cleaner.clean(raw.content or "")
             normalized_content = self._normalizer.normalize(cleaned_content)
-            entities = self._ner.extract_entities(cleaned_content)
-
-            tokens = self._tokenizer.tokenize(normalized_content)
-            filtered_tokens = self._stop_filter.filter(tokens)
-
+            
             is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
             if is_dup:
                 continue
-            
+
             existing_urls.add(url)
+            entities = self._ner.extract_entities(cleaned_content)
+            new_persons = set(entities.get("person", []))
+            new_locations = set(entities.get("location", []))
+            new_orgs = set(entities.get("organization", []))
+            
+            text_to_embed = normalized_title + " " + normalized_content[:150]
+            raw_emb = self._grouper.get_raw_embedding(text_to_embed)
+            self._grouper.update_running_mean(raw_emb)
+            new_centered_emb = self._grouper.get_centered_normalized_embedding(raw_emb)
+            candidates: List[ArticleORM] = []
+            for active_art in active_articles:
+                art_persons = set(active_art.persons or [])
+                art_locations = set(active_art.locations or [])
+                art_orgs = set(active_art.organizations or [])
 
-            assigned_cluster_id = self._grouper.add_to_cluster(normalized_content)
+                has_person_match = bool(new_persons & art_persons)
+                has_location_match = bool(new_locations & art_locations)
+                has_org_match = bool(new_orgs & art_orgs)
 
+                has_title_match = False
+                if not new_persons and not new_locations:
+                    new_words = {w for w in normalized_title.split() if len(w) > 3}
+                    art_words = {w for w in (active_art.title_clean or "").split() if len(w) > 3}
+                    if len(new_words & art_words) >= 2:  
+                        has_title_match = True
+
+                if has_person_match or has_location_match or has_org_match or has_title_match:
+                    candidates.append(active_art)
+            assigned_cluster_id = None
+            semantic_threshold = 0.40 
+
+            if candidates:
+                cluster_groups = defaultdict(list)
+                for cand in candidates:
+                    cluster_groups[cand.cluster_id].append(cand)
+
+                best_cluster_id = None
+                best_similarity = -1.0
+
+                for cid, group in cluster_groups.items():
+                    group_embeddings = []
+                    for art in group:
+                        art_text = art.title_clean + " " + (art.content_clean[:150] if art.content_clean else "")
+                        art_raw_emb = self._grouper.get_raw_embedding(art_text)
+                        art_centered = self._grouper.get_centered_normalized_embedding(art_raw_emb)
+                        group_embeddings.append(art_centered)
+
+                    cluster_centroid = np.mean(group_embeddings, axis=0)
+                    cluster_centroid /= np.linalg.norm(cluster_centroid)  # Re-normalize
+
+                    similarity = float(np.dot(new_centered_emb, cluster_centroid))
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_cluster_id = cid
+
+                if best_similarity >= semantic_threshold:
+                    assigned_cluster_id = best_cluster_id
+
+            if assigned_cluster_id is None:
+                assigned_cluster_id = next_cluster_id
+                next_cluster_id += 1
+
+            tokens = self._tokenizer.tokenize(normalized_content)
+            filtered_tokens = self._stop_filter.filter(tokens)
             classifications = self._classifier.classify(normalized_content, raw.title, filtered_tokens)
 
             scores = self._scorer.evaluate_article(
@@ -230,6 +305,8 @@ class SourceManager:
             session.add(article_orm)
             new_articles.append(article_orm)
             
+            active_articles.append(article_orm)
+
         try:
             await session.flush()
             logger.info("articles_persisted", new_count=len(new_articles))

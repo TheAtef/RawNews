@@ -140,73 +140,42 @@ class HeuristicScorer:
             "reliability_score": round(composite, 2),
             "neutrality_score": s_neut,
             "attribution_score": s_attr
-        }
-
-
+        }    
 class StoryGrouper:
-
-    def __init__(self, similarity_threshold: Optional[float] = None) -> None:
-        self.threshold = similarity_threshold or settings.clustering_similarity_threshold
+    def __init__(self) -> None:
         self.device = "cuda" if settings.device == "cuda" and torch.cuda.is_available() else "cpu"
         self.tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_id)
         self.model = AutoModel.from_pretrained(settings.embedding_model_id).to(self.device)
         self.model.eval()
-
-        self.cluster_anchors: Dict[int, torch.Tensor] = {}
-        self._next_cluster_id = 1
+        self.running_mean = np.zeros(768, dtype=np.float32)
+        self.total_processed = 0
 
     def _mean_pooling(self, model_output, attention_mask) -> torch.Tensor:
         token_embeddings = model_output[0]
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_raw_embedding(self, text: str) -> np.ndarray:
         if not text.strip():
             return np.zeros(768, dtype=np.float32)
 
         inputs = self.tokenizer(
-            [text], padding=True, truncation=True, max_length=512, return_tensors="pt"
+            [text], padding=True, truncation=True, max_length=256, return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
             outputs = self.model(**inputs)
             embeddings = self._mean_pooling(outputs, inputs["attention_mask"])
-            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
             
         return embeddings.cpu().squeeze(0).numpy()
 
-    def add_to_cluster(self, article_text: str) -> int:
-        new_vector = self.get_embedding(article_text)
-        new_tensor = torch.from_numpy(new_vector).to(self.device)
+    def update_running_mean(self, raw_vector: np.ndarray) -> None:
+        self.total_processed += 1
+        self.running_mean += (raw_vector - self.running_mean) / self.total_processed
 
-        if not self.cluster_anchors:
-            cid = self._next_cluster_id
-            self.cluster_anchors[cid] = new_tensor
-            self._next_cluster_id += 1
-            return cid
-
-        best_cid = None
-        best_similarity = -1.0
-
-        for cid, anchor in self.cluster_anchors.items():
-            similarity = torch.dot(new_tensor, anchor).item()
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_cid = cid
-
-        if best_similarity >= self.threshold and best_cid is not None:
-            alpha = 0.15
-            updated_anchor = (1.0 - alpha) * self.cluster_anchors[best_cid] + alpha * new_tensor
-            self.cluster_anchors[best_cid] = torch.nn.functional.normalize(updated_anchor, p=2, dim=0)
-            return best_cid
-        else:
-            cid = self._next_cluster_id
-            self.cluster_anchors[cid] = new_tensor
-            self._next_cluster_id += 1
-            return cid
-
-    def seed_cluster_anchor(self, cluster_id: int, text: str) -> None:
-        emb_vector = self.get_embedding(text)
-        self.cluster_anchors[cluster_id] = torch.from_numpy(emb_vector).to(self.device)
-        if cluster_id >= self._next_cluster_id:
-            self._next_cluster_id = cluster_id + 1
+    def get_centered_normalized_embedding(self, raw_vector: np.ndarray) -> np.ndarray:
+        centered = raw_vector - self.running_mean
+        norm = np.linalg.norm(centered)
+        if norm == 0:
+            return centered
+        return centered / norm
