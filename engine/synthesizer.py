@@ -1,8 +1,8 @@
-# engine/synthesizer.py
 from __future__ import annotations
 
 import httpx
 import torch
+import gc
 import structlog
 from typing import List
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -16,9 +16,22 @@ class NewsSynthesizer:
         self.use_local = settings.use_local_gemma_pipeline
         self.tokenizer = None
         self.model = None
+        
+
         if self.tokenizer is None or self.model is None:
             logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
             self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
+            device = "cpu"
+            if torch.cuda.is_available():
+                total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if total_vram > 8.1: 
+                    device = "cuda"
+
+            logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id, target_device=device)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                settings.gemma_model_id,
+                token=hf_token
+            )
             self.model = AutoModelForCausalLM.from_pretrained(
                 settings.gemma_model_id,
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
@@ -36,10 +49,10 @@ class NewsSynthesizer:
     #         )
 
     def _build_prompt(self, articles_content: List[str]) -> str:
-        # Combine different viewpoints into a unified structure
         combined_texts = ""
         for idx, text in enumerate(articles_content):
-            combined_texts += f"\n--- رواية المصدر {idx + 1} ---\n{text.strip()}\n"
+            trimmed_text = text.strip()[:1200]
+            combined_texts += f"\n--- رواية المصدر {idx + 1} ---\n{trimmed_text}\n"
 
         prompt = (
             "<start_of_turn>user\n"
@@ -64,16 +77,23 @@ class NewsSynthesizer:
 
         if self.use_local:
             try:
-                # self._init_local_pipeline()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+
                 inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=1024,
+                        max_new_tokens=800,  
                         temperature=0.2,
                         do_sample=True
                     )
                 decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
                 if "التقرير الصحفي الموحد والحيادي:" in decoded:
                     return decoded.split("التقرير الصحفي الموحد والحيادي:")[-1].strip()
                 return decoded.strip()

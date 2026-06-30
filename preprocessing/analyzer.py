@@ -39,7 +39,6 @@ class AraBERTClassifier:
             self.enabled = False
 
     def classify(self, text: str, title: str, clean_tokens: List[str]) -> Dict[str, str]:
-
         if not self.enabled or not text.strip():
             return {
                 "propaganda_label": "neutral",
@@ -61,6 +60,7 @@ class AraBERTClassifier:
                 propaganda_label = "propaganda"
             else:
                 propaganda_label = "neutral"
+
             has_speculative_indicators = any(
                 w in truncated_text for w in ["قد", "ربما", "يتوقع", "يُحتمل", "سيناريو", "تقديرات"]
             )
@@ -141,6 +141,8 @@ class HeuristicScorer:
             "neutrality_score": s_neut,
             "attribution_score": s_attr
         }    
+
+
 class StoryGrouper:
     def __init__(self) -> None:
         self.device = "cuda" if settings.device == "cuda" and torch.cuda.is_available() else "cpu"
@@ -168,6 +170,13 @@ class StoryGrouper:
             embeddings = self._mean_pooling(outputs, inputs["attention_mask"])
             
         return embeddings.cpu().squeeze(0).numpy()
+
+    def get_normalized_embedding(self, text: str) -> np.ndarray:
+        raw_vector = self.get_raw_embedding(text)
+        norm = np.linalg.norm(raw_vector)
+        if norm == 0:
+            return raw_vector
+        return raw_vector / norm
 
     def update_running_mean(self, raw_vector: np.ndarray) -> None:
         self.total_processed += 1

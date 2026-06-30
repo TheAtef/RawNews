@@ -2,17 +2,16 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import newspaper
 import cloudscraper
 import numpy as np
 import structlog
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from core.config import NewsSourceConfig, settings
 from core.sources_list import ARABIC_NEWS_SOURCES
-from core.constants import ARABIC_STOPWORDS
+from core.constants import ARABIC_STOPWORDS, ARABIC_BOILERPLATE_KEYWORDS, GEO_DOMAINS, IGNORE_TITLE_WORDS
 from engine.fetcher import ArticleScraper, RSSFetcher, GoogleNews
 from engine.scraper import RawArticle
 from models.orm import ArticleORM
@@ -27,6 +26,85 @@ from preprocessing.ner import NER
 
 logger = structlog.get_logger(__name__)
 
+
+def _light_stem(word: str) -> str:
+    word = word.replace("ة", "ه").replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    for prefix in ["ال", "وال", "بال", "فال", "لل"]:
+        if word.startswith(prefix) and len(word) > len(prefix) + 2:
+            word = word[len(prefix):]
+            break
+    for suffix in ["ين", "ون", "ات", "يه", "ية", "ها", "هم", "نا", "ي"]:
+        if word.endswith(suffix) and len(word) > len(suffix) + 1:
+            word = word[:-len(suffix)]
+            break
+    return word
+
+
+def _share_entities(set_a: Set[str], set_b: Set[str]) -> bool:
+    if not set_a or not set_b:
+        return False
+    if set_a & set_b:
+        return True
+    
+    for item_a in set_a:
+        clean_a = item_a.replace("ال", "").strip()
+        for item_b in set_b:
+            clean_b = item_b.replace("ال", "").strip()
+            if len(clean_a) > 3 and len(clean_b) > 3:
+                if clean_a in clean_b or clean_b in clean_a:
+                    return True
+    return False
+
+def is_boilerplate(text: str) -> bool:
+    if not text:
+        return True
+    if len(text) < 400:
+        match_count = sum(1 for kw in ARABIC_BOILERPLATE_KEYWORDS if kw in text)
+        if match_count >= 2:
+            return True
+    return False
+
+
+def has_geographical_conflict(locs_a: List[str], locs_b: List[str], title_a: str, title_b: str) -> bool:
+    set_a = {l.lower() for l in locs_a} | set(title_a.lower().split())
+    set_b = {l.lower() for l in locs_b} | set(title_b.lower().split())
+
+    for domain_name, terms in GEO_DOMAINS.items():
+        has_a = any(term in set_a for term in terms)
+        if not has_a:
+            continue
+            
+        for other_domain, other_terms in GEO_DOMAINS.items():
+            if other_domain == domain_name:
+                continue
+            has_b = any(term in set_b for term in other_terms)
+            if has_b:
+
+                has_a_other = any(term in set_a for term in other_terms)
+                has_b_this = any(term in set_b for term in terms)
+                if not has_a_other and not has_b_this:
+                    return True
+                    
+    return False
+def has_title_vocabulary_conflict(title_a: str, title_b: str) -> bool:
+
+    words_a = {w.strip('"«»“”\'').strip(':') for w in title_a.lower().split() if len(w) > 2}
+    words_b = {w.strip('"«»“”\'').strip(':') for w in title_b.lower().split() if len(w) > 2}
+    
+    action_words_a = words_a - IGNORE_TITLE_WORDS
+    action_words_b = words_b - IGNORE_TITLE_WORDS
+    
+    if not action_words_a or not action_words_b:
+        return False
+        
+    intersection = action_words_a & action_words_b
+    if not intersection:
+        stems_a = {_light_stem(w) for w in action_words_a}
+        stems_b = {_light_stem(w) for w in action_words_b}
+        if not (stems_a & stems_b):
+            return True 
+            
+    return False
 
 class SourceManager:
     def __init__(self) -> None:
@@ -58,7 +136,6 @@ class SourceManager:
         recent_articles = result.scalars().all()
 
         for art in recent_articles:
-      
             if art.content:
                 self._deduplicator.seed_known_article(art.url, art.content)
             elif art.title:
@@ -78,7 +155,6 @@ class SourceManager:
         scrape_full_content: bool = True,
     ) -> List[ArticleORM]:
         await self._warm_up_processors(session)
-        
         cutoff = datetime.utcnow() - timedelta(hours=age_hours)
 
         rss_fetcher = RSSFetcher(timeout=settings.fetch_timeout_seconds)
@@ -96,11 +172,7 @@ class SourceManager:
         all_raw: List[RawArticle] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error(
-                    "source_fetch_failed",
-                    source=self._sources[i].name,
-                    error=str(result),
-                )
+                logger.error("source_fetch_failed", source=self._sources[i].name, error=str(result))
             elif result:
                 all_raw.extend(result)
 
@@ -110,7 +182,6 @@ class SourceManager:
         ]
 
         logger.info("fetch_complete", total_raw=len(all_raw), after_age_filter=len(filtered))
-
         new_articles = await self._persist_articles(session, filtered)
         return new_articles
 
@@ -183,10 +254,14 @@ class SourceManager:
             if not is_arabic_text(raw.title + " " + (raw.content or "")):
                 continue
 
+            content_to_use = raw.content or ""
+            if is_boilerplate(content_to_use):
+                content_to_use = raw.title
+
             cleaned_title = self._cleaner.clean(raw.title)
             normalized_title = self._normalizer.normalize(cleaned_title)
 
-            cleaned_content = self._cleaner.clean(raw.content or "")
+            cleaned_content = self._cleaner.clean(content_to_use)
             normalized_content = self._normalizer.normalize(cleaned_content)
             
             is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
@@ -199,31 +274,47 @@ class SourceManager:
             new_locations = set(entities.get("location", []))
             new_orgs = set(entities.get("organization", []))
             
-            text_to_embed = normalized_title + " " + normalized_content[:150]
-            raw_emb = self._grouper.get_raw_embedding(text_to_embed)
-            self._grouper.update_running_mean(raw_emb)
-            new_centered_emb = self._grouper.get_centered_normalized_embedding(raw_emb)
+            text_to_embed = normalized_title + " " + normalized_content[:400]
+            new_norm_emb = self._grouper.get_normalized_embedding(text_to_embed)
+            
             candidates: List[ArticleORM] = []
+            candidate_confidences: Dict[int, float] = {}
+            
+            new_title_stems = {_light_stem(w) for w in normalized_title.split() if len(w) > 3}
+
             for active_art in active_articles:
+                art_locations = active_art.locations or []
+                
+                if has_geographical_conflict(
+                    locs_a=list(new_locations),
+                    locs_b=art_locations,
+                    title_a=raw.title,
+                    title_b=active_art.title
+                ):
+                    continue
+
+                if has_title_vocabulary_conflict(raw.title, active_art.title):
+                    continue
+
                 art_persons = set(active_art.persons or [])
-                art_locations = set(active_art.locations or [])
                 art_orgs = set(active_art.organizations or [])
 
-                has_person_match = bool(new_persons & art_persons)
-                has_location_match = bool(new_locations & art_locations)
-                has_org_match = bool(new_orgs & art_orgs)
+                has_person_match = _share_entities(new_persons, art_persons)
+                has_location_match = _share_entities(new_locations, set(art_locations))
+                has_org_match = _share_entities(new_orgs, art_orgs)
 
-                has_title_match = False
-                if not new_persons and not new_locations:
-                    new_words = {w for w in normalized_title.split() if len(w) > 3}
-                    art_words = {w for w in (active_art.title_clean or "").split() if len(w) > 3}
-                    if len(new_words & art_words) >= 2:  
-                        has_title_match = True
+                art_title_stems = {_light_stem(w) for w in (active_art.title_clean or "").split() if len(w) > 3}
+                stem_intersection = new_title_stems & art_title_stems
 
-                if has_person_match or has_location_match or has_org_match or has_title_match:
-                    candidates.append(active_art)
+                matches_count = sum([has_person_match, has_location_match, has_org_match])
+                title_weight = min(1.0, len(stem_intersection) / 4.0)
+                confidence = (matches_count * 0.35) + (title_weight * 0.5)
+                
+                candidates.append(active_art)
+                candidate_confidences[active_art.id] = confidence
+
             assigned_cluster_id = None
-            semantic_threshold = 0.40 
+            base_threshold = 0.87 
 
             if candidates:
                 cluster_groups = defaultdict(list)
@@ -232,29 +323,52 @@ class SourceManager:
 
                 best_cluster_id = None
                 best_similarity = -1.0
+                best_group_confidence = 0.0
 
                 for cid, group in cluster_groups.items():
                     group_embeddings = []
+                    max_heuristic_confidence = 0.0
+
                     for art in group:
-                        art_text = art.title_clean + " " + (art.content_clean[:150] if art.content_clean else "")
-                        art_raw_emb = self._grouper.get_raw_embedding(art_text)
-                        art_centered = self._grouper.get_centered_normalized_embedding(art_raw_emb)
-                        group_embeddings.append(art_centered)
+                        art_text = art.title_clean + " " + (art.content_clean[:400] if art.content_clean else "")
+                        art_emb = self._grouper.get_normalized_embedding(art_text)
+                        group_embeddings.append(art_emb)
+                        
+                        conf = candidate_confidences.get(art.id, 0.0)
+                        if conf > max_heuristic_confidence:
+                            max_heuristic_confidence = conf
 
                     cluster_centroid = np.mean(group_embeddings, axis=0)
-                    cluster_centroid /= np.linalg.norm(cluster_centroid)  # Re-normalize
+                    centroid_norm = np.linalg.norm(cluster_centroid)
+                    if centroid_norm > 0:
+                        cluster_centroid /= centroid_norm
 
-                    similarity = float(np.dot(new_centered_emb, cluster_centroid))
+                    similarity = float(np.dot(new_norm_emb, cluster_centroid))
                     if similarity > best_similarity:
                         best_similarity = similarity
                         best_cluster_id = cid
+                        best_group_confidence = max_heuristic_confidence
 
-                if best_similarity >= semantic_threshold:
+                if best_group_confidence >= 0.7:
+                    adapted_threshold = 0.83  
+                elif best_group_confidence >= 0.4:
+                    adapted_threshold = 0.85  
+                else:
+                    adapted_threshold = base_threshold
+
+                if best_similarity >= adapted_threshold:
                     assigned_cluster_id = best_cluster_id
+                    logger.info(
+                        "assigned_to_cluster", 
+                        cluster_id=assigned_cluster_id, 
+                        similarity=round(best_similarity, 3),
+                        threshold=round(adapted_threshold, 2)
+                    )
 
             if assigned_cluster_id is None:
                 assigned_cluster_id = next_cluster_id
                 next_cluster_id += 1
+                logger.info("created_new_cluster", cluster_id=assigned_cluster_id)
 
             tokens = self._tokenizer.tokenize(normalized_content)
             filtered_tokens = self._stop_filter.filter(tokens)
@@ -262,7 +376,7 @@ class SourceManager:
 
             scores = self._scorer.evaluate_article(
                 source_name=raw.source_name,
-                raw_text=raw.content or "",
+                raw_text=content_to_use,
                 tokens=filtered_tokens
             )
 
@@ -276,7 +390,7 @@ class SourceManager:
                 url=raw.url,
                 source_name=raw.source_name,
                 title=raw.title,
-                content=raw.content,
+                content=content_to_use,
                 title_clean=normalized_title,
                 content_clean=normalized_content,
 
@@ -299,12 +413,11 @@ class SourceManager:
                 published_at=raw.published_at,
                 scraped_at=raw.scraped_at,
                 language=raw.language,
-                word_count=len(raw.content.split()) if raw.content else 0,
+                word_count=len(content_to_use.split()),
                 is_processed=True,
             )
             session.add(article_orm)
             new_articles.append(article_orm)
-            
             active_articles.append(article_orm)
 
         try:
@@ -345,7 +458,6 @@ class SourceManager:
         for entry in entries:
             try:
                 text = ""
-               
                 data = await asyncio.to_thread(newspaper.article, entry.link)
                 
                 if hasattr(data, 'text_cleaned') and data.text_cleaned != "":

@@ -1,4 +1,3 @@
-# search_pipeline.py
 from __future__ import annotations
 
 import collections
@@ -96,8 +95,9 @@ async def search_and_synthesize(keyword: str, time_window:str, limit:int) -> Non
 
 if __name__ == "__main__":
     import sys
-    query_word = "سوريا"
+    query_word = "الشرع"
     if len(sys.argv) > 1:
         query_word = " ".join(sys.argv[1:])
+        
         
     asyncio.run(search_and_synthesize(keyword=query_word, time_window="7d", limit=15))
