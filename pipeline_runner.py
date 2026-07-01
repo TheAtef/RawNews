@@ -3,7 +3,6 @@ from __future__ import annotations
 import collections
 import collections.abc
 
-from engine.retriever import Retriever
 
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
@@ -15,6 +14,7 @@ import asyncio
 import structlog
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from engine.retriever import Retriever
 
 from core.config import settings
 from db.base import Base
@@ -100,4 +100,4 @@ if __name__ == "__main__":
         query_word = " ".join(sys.argv[1:])
         
         
-    asyncio.run(search_and_synthesize(keyword=query_word, time_window="7d", limit=15))
+    asyncio.run(search_and_synthesize(keyword=query_word, time_window="2d", limit=10))

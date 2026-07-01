@@ -36,10 +36,12 @@ class Settings(BaseSettings):
     # arabert configurations for analysis and clustering
     embedding_model_id: str = "aubmindlab/bert-base-arabertv02"
     sentiment_model_id: str = "./train/models/fine_tuned_arabert_statement_type"
+    multi_sentiment_model_id: str = "./train/models/fine_tuned_arabert_multitask"
 
     # gemma 2 configuration strictly for summarization
     # gemma_model_id: str = "./train/models/gemma2_arabic_summarizer_adapter"
-    gemma_model_id: str = "google/gemma-3-1b-it"
+    # gemma_model_id: str = "google/gemma-3-1b-it"
+    gemma_model_id: str = "./train/models/gemma3_1b_arabic_summarizer_adapter"
     # gemma_api_url: str = "http://localhost:11434/v1" 
     # gemma_api_key: str = "ollama"
     use_local_gemma_pipeline: bool = True  

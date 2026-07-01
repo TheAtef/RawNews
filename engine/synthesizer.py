@@ -30,7 +30,7 @@ class NewsSynthesizer:
             logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id, target_device=device)
             self.tokenizer = AutoTokenizer.from_pretrained(
                 settings.gemma_model_id,
-                token=hf_token
+                # token=hf_token
             )
             self.model = AutoModelForCausalLM.from_pretrained(
                 settings.gemma_model_id,
