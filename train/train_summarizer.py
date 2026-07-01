@@ -9,15 +9,16 @@ collections.MutableSequence = collections.abc.MutableSequence
 collections.MutableSet = collections.abc.MutableSet
 
 # get access token from higgingface to download the gemma models.
-access_token = ''
-from huggingface_hub import login
-login(access_token)
+# access_token = ''
+# from huggingface_hub import login
+# login(access_token)
 
 import sys
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
 import torch
 import structlog
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import LoraConfig, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
@@ -30,6 +31,9 @@ from train.prepare_data import load_file_to_df
 logger = structlog.get_logger(__name__)
 
 def format_gemma_prompt(df, text_col: str = "text", summary_col: str = "summary") -> Dataset:
+    if isinstance(df, Dataset):
+        df = df.to_pandas()
+
     formatted_prompts = []
     for _, row in df.iterrows():
         article_text = row.get(text_col) or ""
@@ -54,36 +58,59 @@ def format_gemma_prompt(df, text_col: str = "text", summary_col: str = "summary"
         
     return Dataset.from_list(formatted_prompts)
 
-def train_gemma_summarizer(
-    train_path: str = os.path.join(script_dir, "balanced_clean_fr.jsonl"),
-    test_path: str = os.path.join(script_dir, "clean_test_sentences.jsonl") 
-):
+def train_gemma_summarizer():
     # model_id = "google/gemma-4-E2B-it" # 10.2GB
-    model_id = "google/gemma-3-1b-it" # 2GB
+    model_id = "google/gemma-3-1b-it" # 2GB    
+    dataset = load_dataset("arbml/AraSum", split="train")
+
+    shuffled_dataset = dataset.shuffle(seed=42)
+
+    total_rows = shuffled_dataset.num_rows
+    batch_size = 500
+    num_batches = 6
+
+    step = (total_rows - batch_size) // (num_batches - 1)
+
+    selected_indices = []
+    for i in range(num_batches):
+        start_idx = i * step
+        end_idx = start_idx + batch_size
+        selected_indices.extend(range(start_idx, end_idx))
+
+    final_dataset = shuffled_dataset.select(selected_indices)
+
+    print(f"Original size: {len(dataset)}")
+    print(f"New size: {len(final_dataset)}")
+    print(final_dataset)
     
-    print(f"Loading summarization training set from: {train_path}")
-    train_df = load_file_to_df(train_path)
     
-    print(f"Loading summarization testing set from: {test_path}")
-    test_df = load_file_to_df(test_path)
+    split = final_dataset.train_test_split(test_size=0.1, seed=42)
+    train_df = split['train']
+    test_df = split['test']
     
-    train_ds = format_gemma_prompt(train_df, text_col="text", summary_col="summary")
-    eval_ds = format_gemma_prompt(test_df, text_col="text", summary_col="summary")
+    del split
+    del final_dataset
+    
+    train_ds = format_gemma_prompt(train_df, text_col="article", summary_col="summary")
+    eval_ds = format_gemma_prompt(test_df, text_col="article", summary_col="summary")
+    
+    del train_df
+    del test_df
     
     if len(train_ds) == 0:
         raise ValueError("Training dataset is empty. Ensure your JSON/JSONL files have valid text content.")
 
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True
-    )
+    # bnb_config = BitsAndBytesConfig(
+    #     load_in_4bit=True,
+    #     bnb_4bit_quant_type="nf4",
+    #     bnb_4bit_compute_dtype=torch.bfloat16,
+    #     bnb_4bit_use_double_quant=True
+    # )
     
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        quantization_config=bnb_config,
+        # quantization_config=bnb_config,
         device_map="cuda" # "auto"
     )
     
@@ -100,32 +127,36 @@ def train_gemma_summarizer(
     
     training_args = SFTConfig(
         output_dir="./train/checkpoints/gemma2_summarizer",
-        save_strategy="no", # Disables saving at the end of epochs
-        save_steps=10000000,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=8,
-        learning_rate=2e-4,
-        logging_steps=10,
-        num_train_epochs=3,
+        save_strategy="no",
+        # save_total_limit=2,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
+        learning_rate=1e-4,
+        weight_decay=0.01,
         eval_strategy="epoch",
-        bf16=True,
+        num_train_epochs=1,
         dataset_text_field="prompt",
-        max_length=1524
+        fp16=True,
+        # max_length=1024,
+        logging_steps=20
     )
     
     trainer = SFTTrainer(
         model=model,
         train_dataset=train_ds,
-        eval_dataset=eval_ds if len(eval_ds) > 0 else None,
+        eval_dataset=eval_ds,
         peft_config=peft_config,
         args=training_args,
         processing_class=tokenizer,
     )
     
-    print("Beginning Gemma 2 QLoRA Summarizer Training...")
+    print("Beginning Gemma 3 Summarizer Training...")
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
     trainer.train()
     
-    save_path = "./train/models/gemma2_arabic_summarizer_adapter"
+    save_path = "./train/models/gemma3_1b_arabic_summarizer_adapter"
     trainer.model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
     print(f"Summarizer adapters successfully saved to: {save_path}")

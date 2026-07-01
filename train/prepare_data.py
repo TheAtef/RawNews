@@ -5,8 +5,10 @@ import pandas as pd
 from datasets import Dataset
 from arabert.preprocess import ArabertPreprocessor
 
-PROPAGANDA_MAP = {"neutral": 0, "loaded_language": 1, "propaganda": 2}
-STATEMENT_MAP = {"fact": 0, "opinion": 1, "speculation": 2}
+PROPAGANDA_MAP = {"neutral" : 0, "loaded_language": 1, "propaganda": 2, 
+        "sensationalism": 3, "false_dichotomy": 4, "fear_appeal": 5, 
+        "doubt_casting": 6, "exaggeration": 7, "stereotyping": 8}
+STATEMENT_MAP = {"fact": 0, "opinion": 1, "speculation": 2, "reporting": 3}
 ATTRIBUTION_MAP = {"supported_claim": 0, "unsupported_claim": 1}
 
 def load_file_to_df(file_path: str) -> pd.DataFrame:
@@ -17,6 +19,7 @@ def load_file_to_df(file_path: str) -> pd.DataFrame:
         return pd.read_json(file_path, lines=True)
     elif file_path.endswith(".json"):
         return pd.read_json(file_path)
+    
 def prepare_single_dataset(df: pd.DataFrame, target_task: str) -> Dataset:
     preprocessor = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
     
@@ -45,4 +48,27 @@ def prepare_single_dataset(df: pd.DataFrame, target_task: str) -> Dataset:
             "label": label
         })
         
+    return Dataset.from_list(processed_records)
+
+
+def prepare_multitask_dataset(df: pd.DataFrame) -> Dataset:
+    preprocessor = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
+    processed_records = []
+    for _, row in df.iterrows():
+        title = row.get("title") or ""
+        content = row.get("text") or ""
+        combined_text = f"{title} [SEP] {content}"
+        cleaned_text = preprocessor.preprocess(combined_text)
+
+        raw_statement = row.get("statement_type", "fact")
+        raw_propaganda = row.get("propaganda_label", "neutral")
+        raw_attribution = row.get("attribution_label", "unsupported_claim")
+
+        processed_records.append({
+            "text": cleaned_text,
+            "statement_type_label": STATEMENT_MAP.get(raw_statement, 0),
+            "propaganda_label": PROPAGANDA_MAP.get(raw_propaganda, 0),
+            "attribution_label": ATTRIBUTION_MAP.get(raw_attribution, 1),
+        })
+
     return Dataset.from_list(processed_records)
