@@ -1,8 +1,10 @@
+from __future__ import annotations
 import collections
 import collections.abc
 import json
 import re
 import sys
+import os
 
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
@@ -12,36 +14,42 @@ collections.MutableSet = collections.abc.MutableSet
 
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from arabert.preprocess import ArabertPreprocessor  
 
 from preprocessing.cleaner import ArabicNewsCleaner
 from preprocessing.normalizer import ArabicNormalizer
-from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
+from preprocessing.tokenizer import ArabicTokenizer
 from core.config import settings
 from train.prepare_data import ATTRIBUTION_MAP, PROPAGANDA_MAP, STATEMENT_MAP
+model_path = os.path.abspath(settings.multi_sentiment_model_id)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-model = AutoModelForSequenceClassification.from_pretrained(settings.multi_sentiment_model_id)
+print(f"Loading local model from: {model_path}")
+model = AutoModelForSequenceClassification.from_pretrained(model_path)
 model.to(device)
-tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+arabert_preprocessor = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
 
 content = ''
 cleaner = ArabicNewsCleaner(remove_numbers=False, keep_quotes=True)
 normalizer = ArabicNormalizer()
-tokenizer_text = ArabicTokenizer()
 
 with open("piece.txt", "r", encoding='utf-8') as file:
     content = file.read()
     
 clean = cleaner.clean(content)
 normal = normalizer.normalize(clean)
-print(normal)
+
+segmented = arabert_preprocessor.preprocess(normal)
+print(f"Preprocessed Text for Inference:\n{segmented}\n")
 
 reverse_statement_map = {v: k for k, v in STATEMENT_MAP.items()}
 reverse_propaganda_map = {v: k for k, v in PROPAGANDA_MAP.items()}
 reverse_attribution_map = {v: k for k, v in ATTRIBUTION_MAP.items()}
 
-inputs = tokenizer(normal, truncation=True, max_length=256, return_tensors="pt").to(device)
+inputs = tokenizer(segmented, truncation=True, max_length=256, return_tensors="pt").to(device)
 outputs = model(**inputs)
 logits = outputs.logits.squeeze(0)
 

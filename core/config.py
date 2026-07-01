@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # arabert configurations for analysis and clustering
     embedding_model_id: str = "aubmindlab/bert-base-arabertv02"
     sentiment_model_id: str = "./train/models/fine_tuned_arabert_statement_type"
-    multi_sentiment_model_id: str = "./train/models/fine_tuned_arabert_multitask"
+    multi_sentiment_model_id: str = "./train/train/models/fine_tuned_arabert_multitask"
 
     # gemma 2 configuration strictly for summarization
     # gemma_model_id: str = "./train/models/gemma2_arabic_summarizer_adapter"
