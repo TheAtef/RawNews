@@ -4,10 +4,12 @@ import torch
 import numpy as np
 import structlog
 from typing import List, Dict, Set, Optional
-from transformers import pipeline, AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
 from core.config import settings
 from core.constants import BIAS_INDICATORS
 from core.sources_list import ARABIC_NEWS_SOURCES
+from train.prepare_data import ATTRIBUTION_MAP, PROPAGANDA_MAP, STATEMENT_MAP
+
 
 logger = structlog.get_logger(__name__)
 
@@ -24,15 +26,17 @@ ATTRIBUTION_MARKERS: List[str] = [
 ]
 
 
+reverse_statement_map = {v: k for k, v in STATEMENT_MAP.items()}
+reverse_propaganda_map = {v: k for k, v in PROPAGANDA_MAP.items()}
+reverse_attribution_map = {v: k for k, v in ATTRIBUTION_MAP.items()}
+
 class AraBERTClassifier:
     def __init__(self) -> None:
-        self.device = 0 if settings.device == "cuda" and torch.cuda.is_available() else -1            
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         try:
-            self.sentiment_pipe = pipeline(
-                "sentiment-analysis",
-                model=settings.sentiment_model_id,
-                device=self.device
-            )
+            self.model = AutoModelForSequenceClassification.from_pretrained(settings.multi_sentiment_model_id)
+            self.model.to(self.device)
+            self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
             self.enabled = True
         except Exception as e:
             logger.error("arabert_classifier_init_failed", error=str(e))
@@ -46,49 +50,29 @@ class AraBERTClassifier:
                 "attribution_label": "unsupported_claim"
             }
 
-        truncated_text = text[:1000]
+        truncated_text = title + "[SEP]" + text
 
         try:
-            #propaganda & bias detection using arabert sentiment Analysis
-            sent_res = self.sentiment_pipe(truncated_text)[0]
-            label = sent_res["label"].upper()  
-            score = sent_res["score"]
+            inputs = self.tokenizer(truncated_text, truncation=True, return_tensors="pt").to(self.device)
+            outputs = self.model(**inputs)
+            logits = outputs.logits.squeeze(0)
 
-            if label == "NEG" and score > 0.75:
-                propaganda_label = "loaded_language"
-            elif label == "POS" and score > 0.85:
-                propaganda_label = "propaganda"
-            else:
-                propaganda_label = "neutral"
+            statement_logits = logits[: len(STATEMENT_MAP)]
+            propaganda_logits = logits[len(STATEMENT_MAP) : len(STATEMENT_MAP) + len(PROPAGANDA_MAP)]
+            attribution_logits = logits[-len(ATTRIBUTION_MAP) :]
 
-            has_speculative_indicators = any(
-                w in truncated_text for w in ["قد", "ربما", "يتوقع", "يُحتمل", "سيناريو", "تقديرات"]
-            )
-            has_opinion_indicators = any(
-                w in truncated_text for w in ["أعتقد", "يرى الكاتب", "في رأيي", "وجهة نظر", "أظن"]
-            )
+            statement_probs = torch.softmax(statement_logits, dim=-1)
+            propaganda_probs = torch.softmax(propaganda_logits, dim=-1)
+            attribution_probs = torch.softmax(attribution_logits, dim=-1)
 
-            if has_speculative_indicators:
-                statement_type = "speculation"
-            elif has_opinion_indicators:
-                statement_type = "opinion"
-            else:
-                statement_type = "fact"
-
-            # attribution level classification (supported vs unsupported claim)
-            # checks for direct quotations or active linguistic markers of attribution
-            has_markers = any(marker in truncated_text for marker in ATTRIBUTION_MARKERS)
-            has_quotes = len(re.findall(r'["«»“”]', truncated_text)) >= 2
-
-            if has_markers or has_quotes:
-                attribution_label = "supported_claim"
-            else:
-                attribution_label = "unsupported_claim"
+            statement_idx = int(torch.argmax(statement_probs).item())
+            propaganda_idx = int(torch.argmax(propaganda_probs).item())
+            attribution_idx = int(torch.argmax(attribution_probs).item())
 
             return {
-                "propaganda_label": propaganda_label,
-                "statement_type": statement_type,
-                "attribution_label": attribution_label
+                "propaganda_label": reverse_propaganda_map[propaganda_idx],
+                "statement_type":  reverse_statement_map[statement_idx],
+                "attribution_label": reverse_attribution_map[attribution_idx]
             }
 
         except Exception as e:
