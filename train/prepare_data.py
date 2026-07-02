@@ -13,13 +13,13 @@ PROPAGANDA_MAP = {
     "doubt_casting": 6, "exaggeration": 7, "stereotyping": 8
 }
 STATEMENT_MAP = {
-    "fact": 0, "opinion": 1, "speculation": 2, "reporting": 3, "factual_reporting": 4
+    "fact": 0, "opinion": 1, "speculation": 2, "reporting": 3
 }
 ATTRIBUTION_MAP = {
     "supported_claim": 0, "unsupported_claim": 1, "quote_present": 2, "direct_source": 3
 }
 
-GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
+GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-large-arabertv02")
 
 
 def load_file_to_df(file_path: str) -> pd.DataFrame:

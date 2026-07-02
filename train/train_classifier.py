@@ -45,7 +45,7 @@ MULTITASK_ORDER = ["statement_type", "propaganda", "attribution"]
 
 
 class MultiHeadAraBERT(nn.Module):
-    def __init__(self, model_name: str = "aubmindlab/bert-base-arabertv02"):
+    def __init__(self, model_name: str = "aubmindlab/bert-large-arabertv02"):
         super().__init__()
         self.bert = BertModel.from_pretrained(model_name)
         self.config = self.bert.config
@@ -178,7 +178,7 @@ def run_classifier_training(
     train_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_train_augmented.jsonl")),
     test_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_test.jsonl")),
 ):
-    model_name = "aubmindlab/bert-base-arabertv02"
+    model_name = "aubmindlab/bert-large-arabertv02"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     print(f"Loading training data from: {train_path}")
