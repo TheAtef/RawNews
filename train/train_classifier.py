@@ -175,7 +175,7 @@ def calculate_task_class_weights(df: pd.DataFrame) -> dict[str, torch.Tensor]:
 def run_classifier_training(
     task_name: str,
     num_labels: int | None = None,
-    train_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_train_augmented.jsonl")),
+    train_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_train.jsonl")),
     test_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_test.jsonl")),
 ):
     model_name = "aubmindlab/bert-large-arabertv02"
@@ -253,9 +253,10 @@ def run_classifier_training(
     training_args = TrainingArguments(
         output_dir=f"./train/checkpoints/{task_name}_model",
         learning_rate=2e-5,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        num_train_epochs=8,
+        per_device_train_batch_size=1,    
+        per_device_eval_batch_size=1,     
+        gradient_accumulation_steps=8,            
+        num_train_epochs=5,
         weight_decay=0.01,
         warmup_ratio=0.1,
         eval_strategy="epoch",
@@ -263,7 +264,7 @@ def run_classifier_training(
         load_best_model_at_end=True,
         metric_for_best_model="eval_avg_accuracy",
         greater_is_better=True,
-        fp16=torch.cuda.is_available(),
+        fp16=True,                        
         logging_steps=10,
     )
 

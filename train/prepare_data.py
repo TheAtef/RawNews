@@ -8,15 +8,22 @@ from arabert.preprocess import ArabertPreprocessor
 logger = logging.getLogger(__name__)
 
 PROPAGANDA_MAP = {
-    "neutral": 0, "loaded_language": 1, "propaganda": 2, 
-    "sensationalism": 3, "false_dichotomy": 4, "fear_appeal": 5, 
-    "doubt_casting": 6, "exaggeration": 7, "stereotyping": 8
+    "neutral": 0, 
+    "loaded_language": 1, 
+    "doubt_casting": 2, 
+    "propaganda": 3
 }
+
+
 STATEMENT_MAP = {
-    "fact": 0, "opinion": 1, "speculation": 2, "reporting": 3
+    "reporting": 0, 
+    "opinion": 1, 
+    "speculation": 2
 }
+
 ATTRIBUTION_MAP = {
-    "supported_claim": 0, "unsupported_claim": 1, "quote_present": 2, "direct_source": 3
+    "supported_claim": 0, 
+    "unsupported_claim": 1
 }
 
 GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-large-arabertv02")
@@ -116,7 +123,6 @@ def prepare_multitask_dataset(
         if (raw_statement not in STATEMENT_MAP or 
             raw_propaganda not in PROPAGANDA_MAP or 
             raw_attribution not in ATTRIBUTION_MAP):
-            logger.warning(f"Row {idx}: Missing/invalid labels. Row skipped.")
             continue
 
         processed_records.append({
