@@ -1,7 +1,7 @@
 import json
 import pandas as pd
 
-input_file = "relabeled_train.jsonl"
+input_file = "relabeled_test.jsonl"
 
 def print_dataset_stats(file_path):
     print(f"Loading data from {file_path}...\n")

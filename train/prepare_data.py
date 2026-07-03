@@ -26,7 +26,7 @@ ATTRIBUTION_MAP = {
     "unsupported_claim": 1
 }
 
-GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-large-arabertv02")
+GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
 
 
 def load_file_to_df(file_path: str) -> pd.DataFrame:

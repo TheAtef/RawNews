@@ -45,7 +45,7 @@ MULTITASK_ORDER = ["statement_type", "propaganda", "attribution"]
 
 
 class MultiHeadAraBERT(nn.Module):
-    def __init__(self, model_name: str = "aubmindlab/bert-large-arabertv02"):
+    def __init__(self, model_name: str = "aubmindlab/bert-base-arabertv02"):
         super().__init__()
         self.bert = BertModel.from_pretrained(model_name)
         self.config = self.bert.config
@@ -175,10 +175,10 @@ def calculate_task_class_weights(df: pd.DataFrame) -> dict[str, torch.Tensor]:
 def run_classifier_training(
     task_name: str,
     num_labels: int | None = None,
-    train_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_train.jsonl")),
-    test_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "clean_test.jsonl")),
+    train_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl")),
+    test_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl")),
 ):
-    model_name = "aubmindlab/bert-large-arabertv02"
+    model_name = "aubmindlab/bert-base-arabertv02"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     print(f"Loading training data from: {train_path}")
@@ -254,8 +254,8 @@ def run_classifier_training(
         output_dir=f"./train/checkpoints/{task_name}_model",
         learning_rate=2e-5,               
         num_train_epochs=5,                
-        per_device_train_batch_size=1,    
-        per_device_eval_batch_size=2,      
+        per_device_train_batch_size=2,    
+        per_device_eval_batch_size=8,      
         gradient_accumulation_steps=16,    
         weight_decay=0.01,
         warmup_ratio=0.1,                
