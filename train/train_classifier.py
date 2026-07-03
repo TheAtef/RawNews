@@ -129,8 +129,8 @@ class MultiTaskTrainer(Trainer):
         
         task_scales = {
             "statement_type": 1.2,
-            "propaganda": 1.5,
-            "attribution": 1.0
+            "propaganda": 3.0,
+            "attribution": 0.5
         }
         
         for idx, task in enumerate(MULTITASK_ORDER):
@@ -195,7 +195,7 @@ def run_classifier_training(
     eval_ds = prepare_multitask_dataset(test_df)
 
     def tokenize_fn(examples):
-        return tokenizer(examples["text"], truncation=True, max_length=512)
+        return tokenizer(examples["text"], truncation=True, max_length=400)
 
     tokenized_train = train_ds.map(tokenize_fn, batched=True)
     tokenized_eval = eval_ds.map(tokenize_fn, batched=True)
@@ -252,22 +252,22 @@ def run_classifier_training(
 
     training_args = TrainingArguments(
         output_dir=f"./train/checkpoints/{task_name}_model",
-        learning_rate=2e-5,
+        learning_rate=2e-5,               
+        num_train_epochs=5,                
         per_device_train_batch_size=1,    
-        per_device_eval_batch_size=1,     
-        gradient_accumulation_steps=8,            
-        num_train_epochs=5,
+        per_device_eval_batch_size=2,      
+        gradient_accumulation_steps=16,    
         weight_decay=0.01,
-        warmup_ratio=0.1,
+        warmup_ratio=0.1,                
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        metric_for_best_model="eval_avg_accuracy",
+        metric_for_best_model="eval_propaganda_accuracy", 
         greater_is_better=True,
-        fp16=True,                        
+        fp16=True,                     
         logging_steps=10,
+        dataloader_num_workers=4,          
     )
-
     data_collator = DataCollatorWithPadding(tokenizer)
 
     trainer = MultiTaskTrainer(
