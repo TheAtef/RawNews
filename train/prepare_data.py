@@ -10,15 +10,14 @@ logger = logging.getLogger(__name__)
 PROPAGANDA_MAP = {
     "neutral": 0, 
     "loaded_language": 1, 
-    "doubt_casting": 2, 
-    "propaganda": 3
+    "doubt_casting": 1, 
+    "propaganda": 1
 }
-
 
 STATEMENT_MAP = {
     "reporting": 0, 
     "opinion": 1, 
-    "speculation": 2
+    "speculation": 1
 }
 
 ATTRIBUTION_MAP = {
@@ -41,25 +40,46 @@ def load_file_to_df(file_path: str) -> pd.DataFrame:
         raise ValueError("Unsupported file format. Please provide a .json or .jsonl file.")
 
 
-def _preprocess_sequence(row: pd.Series, preprocessor: ArabertPreprocessor) -> str:
+def _extract_head_tail(text: str, max_words: int = 350) -> str:
+    if not text:
+        return ""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    half = max_words // 2
+    return " ".join(words[:half]) + " ... " + " ".join(words[-half:])
+
+
+def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor) -> tuple[str, str]:
+    title = ""
+    content = ""
+    
     if "optimized_text" in row and pd.notna(row["optimized_text"]):
         parts = str(row["optimized_text"]).split(" [SEP] ")
         if len(parts) == 2:
-            title_prep = preprocessor.preprocess(parts[0])
-            content_prep = preprocessor.preprocess(parts[1])
-            return f"{title_prep} [SEP] {content_prep}"
+            title = preprocessor.preprocess(parts[0])
+            content = preprocessor.preprocess(parts[1])
         else:
-            return preprocessor.preprocess(str(row["optimized_text"]))
+            content = preprocessor.preprocess(str(row["optimized_text"]))
+    else:
+        raw_title = str(row.get("title") or "").strip()
+        raw_content = str(row.get("text") or row.get("content") or "").strip()
+        title = preprocessor.preprocess(raw_title) if raw_title else ""
+        content = preprocessor.preprocess(raw_content) if raw_content else ""
 
-    title = str(row.get("title") or "").strip()
-    content = str(row.get("text") or row.get("content") or "").strip()
+    content = _extract_head_tail(content, max_words=350)
     
-    title_prep = preprocessor.preprocess(title) if title else ""
-    content_prep = preprocessor.preprocess(content) if content else ""
-    
-    if title_prep and content_prep:
-        return f"{title_prep} [SEP] {content_prep}"
-    return title_prep or content_prep
+    if not title.strip():
+        title = "بدون عنوان"
+        
+    return title, content
+
+
+def _preprocess_sequence(row: pd.Series, preprocessor: ArabertPreprocessor) -> str:
+    title, content = _preprocess_sequence_split(row, preprocessor)
+    if title and content:
+        return f"{title} [SEP] {content}"
+    return title or content
 
 
 def prepare_single_dataset(
@@ -112,8 +132,8 @@ def prepare_multitask_dataset(
     processed_records = []
     
     for idx, row in df.iterrows():
-        cleaned_text = _preprocess_sequence(row, preprocessor)
-        if not cleaned_text.strip():
+        title, content = _preprocess_sequence_split(row, preprocessor)
+        if not content.strip():
             continue
 
         raw_statement = row.get("statement_type")
@@ -126,7 +146,8 @@ def prepare_multitask_dataset(
             continue
 
         processed_records.append({
-            "text": cleaned_text,
+            "title": title,
+            "content": content,
             "statement_type_label": STATEMENT_MAP[raw_statement],
             "propaganda_label": PROPAGANDA_MAP[raw_propaganda],
             "attribution_label": ATTRIBUTION_MAP[raw_attribution],

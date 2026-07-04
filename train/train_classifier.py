@@ -15,6 +15,7 @@ from transformers import (
     DataCollatorWithPadding,
     TrainingArguments,
     Trainer,
+    EarlyStoppingCallback
 )
 from transformers.modeling_outputs import SequenceClassifierOutput
 
@@ -43,37 +44,19 @@ TASK_LABEL_MAPS = {
 
 MULTITASK_ORDER = ["statement_type", "propaganda", "attribution"]
 
+MODEL_NAME = "aubmindlab/bert-base-arabertv02"
 
 class MultiHeadAraBERT(nn.Module):
-    def __init__(self, model_name: str = "aubmindlab/bert-base-arabertv02"):
+    def __init__(self, model_name: str = MODEL_NAME):
         super().__init__()
         self.bert = BertModel.from_pretrained(model_name)
         self.config = self.bert.config
-        self.dropout = nn.Dropout(self.config.hidden_dropout_prob)
         
-        self.statement_head = nn.Sequential(
-            nn.Linear(self.config.hidden_size, 256),
-            nn.GELU(),
-            nn.LayerNorm(256),
-            nn.Dropout(0.1),
-            nn.Linear(256, len(STATEMENT_MAP))
-        )
+        self.dropout = nn.Dropout(0.15)
         
-        self.propaganda_head = nn.Sequential(
-            nn.Linear(self.config.hidden_size, 256),
-            nn.GELU(),
-            nn.LayerNorm(256),
-            nn.Dropout(0.1),
-            nn.Linear(256, len(PROPAGANDA_MAP))
-        )
-        
-        self.attribution_head = nn.Sequential(
-            nn.Linear(self.config.hidden_size, 128),
-            nn.GELU(),
-            nn.LayerNorm(128),
-            nn.Dropout(0.1),
-            nn.Linear(128, len(ATTRIBUTION_MAP))
-        )
+        self.statement_head = nn.Linear(self.config.hidden_size, len(STATEMENT_MAP))
+        self.propaganda_head = nn.Linear(self.config.hidden_size, len(PROPAGANDA_MAP))
+        self.attribution_head = nn.Linear(self.config.hidden_size, len(ATTRIBUTION_MAP))
 
     def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):
         outputs = self.bert(
@@ -81,7 +64,11 @@ class MultiHeadAraBERT(nn.Module):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids
         )
-        pooled_output = outputs[1]
+        
+        token_embeddings = outputs[0]
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        pooled_output = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+        
         pooled_output = self.dropout(pooled_output)
         
         st_logits = self.statement_head(pooled_output)
@@ -127,10 +114,10 @@ class MultiTaskTrainer(Trainer):
         start = 0
         device = logits.device
         
-        task_scales = {
-            "statement_type": 1.2,
-            "propaganda": 3.0,
-            "attribution": 0.5
+        task_importance = {
+            "statement_type": 1.0,
+            "propaganda": 2.0,    
+            "attribution": 1.0
         }
         
         for idx, task in enumerate(MULTITASK_ORDER):
@@ -140,16 +127,17 @@ class MultiTaskTrainer(Trainer):
             
             if task in self.class_weights:
                 weight = self.class_weights[task].to(device=device, dtype=task_logits.dtype)
-                task_loss_fct = nn.CrossEntropyLoss(weight=weight)
+                task_loss_fct = nn.CrossEntropyLoss(weight=weight, label_smoothing=0.1)
             else:
-                task_loss_fct = nn.CrossEntropyLoss()
+                task_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.1)
                 
             task_loss = task_loss_fct(task_logits, task_labels)
-            scaled_loss = task_loss * task_scales[task]
-            losses.append(scaled_loss)
+            
+            weighted_loss = task_loss * task_importance[task]
+            losses.append(weighted_loss) 
             start += num_labels
 
-        loss = sum(losses) / len(losses)
+        loss = sum(losses)
         return (loss, outputs) if return_outputs else loss
 
 
@@ -168,18 +156,18 @@ def calculate_task_class_weights(df: pd.DataFrame) -> dict[str, torch.Tensor]:
         classes = np.array(list(TASK_LABEL_MAPS[task].values()))
         
         weights = compute_class_weight("balanced", classes=classes, y=labels_list)
+        weights = np.clip(weights, a_min=0.5, a_max=3.5)
+        
         class_weights[task] = torch.tensor(weights, dtype=torch.float)
     return class_weights
 
 
 def run_classifier_training(
     task_name: str,
-    num_labels: int | None = None,
     train_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl")),
     test_path: str = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl")),
 ):
-    model_name = "aubmindlab/bert-base-arabertv02"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
     print(f"Loading training data from: {train_path}")
     train_df = load_file_to_df(train_path)
@@ -195,7 +183,13 @@ def run_classifier_training(
     eval_ds = prepare_multitask_dataset(test_df)
 
     def tokenize_fn(examples):
-        return tokenizer(examples["text"], truncation=True, max_length=400)
+        return tokenizer(
+            text=examples["title"],
+            text_pair=examples["content"],
+            truncation="only_second",
+            max_length=512,
+            padding="max_length"
+        )
 
     tokenized_train = train_ds.map(tokenize_fn, batched=True)
     tokenized_eval = eval_ds.map(tokenize_fn, batched=True)
@@ -215,17 +209,18 @@ def run_classifier_training(
     tokenized_train = tokenized_train.map(
         combine_labels,
         batched=True,
-        remove_columns=["text", "statement_type_label", "propaganda_label", "attribution_label"],
+        remove_columns=["title", "content", "statement_type_label", "propaganda_label", "attribution_label"],
     )
     tokenized_eval = tokenized_eval.map(
         combine_labels,
         batched=True,
-        remove_columns=["text", "statement_type_label", "propaganda_label", "attribution_label"],
+        remove_columns=["title", "content", "statement_type_label", "propaganda_label", "attribution_label"],
     )
 
-    model = MultiHeadAraBERT(model_name)
+    model = MultiHeadAraBERT(MODEL_NAME)
 
     metric = evaluate.load("accuracy")
+    f1_metric = evaluate.load("f1") 
 
     def compute_metrics(eval_pred):
         logits, labels = eval_pred
@@ -238,36 +233,42 @@ def run_classifier_training(
         propaganda_preds = np.argmax(logits[:, st_len : st_len + pr_len], axis=-1)
         attribution_preds = np.argmax(logits[:, st_len + pr_len :], axis=-1)
 
-        statement_accuracy = metric.compute(predictions=statement_preds, references=labels[:, 0])["accuracy"]
-        propaganda_accuracy = metric.compute(predictions=propaganda_preds, references=labels[:, 1])["accuracy"]
-        attribution_accuracy = metric.compute(predictions=attribution_preds, references=labels[:, 2])["accuracy"]
-        avg_accuracy = (statement_accuracy + propaganda_accuracy + attribution_accuracy) / 3.0
+        st_acc = metric.compute(predictions=statement_preds, references=labels[:, 0])["accuracy"]
+        pr_acc = metric.compute(predictions=propaganda_preds, references=labels[:, 1])["accuracy"]
+        at_acc = metric.compute(predictions=attribution_preds, references=labels[:, 2])["accuracy"]
+        
+        pr_f1 = f1_metric.compute(predictions=propaganda_preds, references=labels[:, 1], average="macro")["f1"]
+
+        avg_accuracy = (st_acc + pr_acc + at_acc) / 3.0
 
         return {
-            "statement_accuracy": statement_accuracy,
-            "propaganda_accuracy": propaganda_accuracy,
-            "attribution_accuracy": attribution_accuracy,
+            "statement_acc": st_acc,
+            "propaganda_acc": pr_acc,
+            "prop_f1_macro": pr_f1, 
+            "attribution_acc": at_acc,
             "avg_accuracy": avg_accuracy,
         }
 
     training_args = TrainingArguments(
         output_dir=f"./train/checkpoints/{task_name}_model",
-        learning_rate=2e-5,               
-        num_train_epochs=5,                
-        per_device_train_batch_size=2,    
+        learning_rate=1.5e-5,         
+        num_train_epochs=10,              
+        per_device_train_batch_size=8,    
         per_device_eval_batch_size=8,      
-        gradient_accumulation_steps=16,    
-        weight_decay=0.01,
-        warmup_ratio=0.1,                
+        gradient_accumulation_steps=4,     
+        max_grad_norm=1.0,                
+        weight_decay=0.05,
+        warmup_ratio=0.10,              
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        metric_for_best_model="eval_propaganda_accuracy", 
+        metric_for_best_model="eval_avg_accuracy", 
         greater_is_better=True,
         fp16=True,                     
-        logging_steps=10,
+        logging_steps=50,
         dataloader_num_workers=4,          
     )
+    
     data_collator = DataCollatorWithPadding(tokenizer)
 
     trainer = MultiTaskTrainer(
@@ -278,6 +279,7 @@ def run_classifier_training(
         compute_metrics=compute_metrics,
         data_collator=data_collator,
         class_weights=class_weights,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)] 
     )
 
     print(f"Starting training session on: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
