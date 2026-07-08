@@ -25,6 +25,18 @@ ATTRIBUTION_MAP = {
     "unsupported_claim": 1
 }
 
+NUM_CLASSES = {
+    "statement_type": len(set(STATEMENT_MAP.values())), 
+    "propaganda": len(set(PROPAGANDA_MAP.values())),     
+    "attribution": len(set(ATTRIBUTION_MAP.values()))    
+}
+
+REVERSE_MAPS = {
+    "propaganda": {0: "neutral", 1: "propaganda"},
+    "statement_type": {0: "reporting", 1: "opinion"},
+    "attribution": {0: "supported_claim", 1: "unsupported_claim"}
+}
+
 GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
 
 
@@ -40,7 +52,7 @@ def load_file_to_df(file_path: str) -> pd.DataFrame:
         raise ValueError("Unsupported file format. Please provide a .json or .jsonl file.")
 
 
-def _extract_head_tail(text: str, max_words: int = 350) -> str:
+def _extract_head_tail(text: str, max_words: int = 750) -> str:
     if not text:
         return ""
     words = text.split()
@@ -67,7 +79,7 @@ def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor
         title = preprocessor.preprocess(raw_title) if raw_title else ""
         content = preprocessor.preprocess(raw_content) if raw_content else ""
 
-    content = _extract_head_tail(content, max_words=350)
+    content = _extract_head_tail(content, max_words=750)
     
     if not title.strip():
         title = "بدون عنوان"
