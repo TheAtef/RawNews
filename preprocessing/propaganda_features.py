@@ -86,9 +86,7 @@ def calculate_loaded_words_ratio(tokens: List[str]) -> float:
         for phrase_tokens in phrase_tokens_list:
             phrase_length = len(phrase_tokens)
 
-            window = normalized_tokens[
-                i:i + phrase_length
-            ]
+            window = normalized_tokens[i:i + phrase_length]
 
             if window == phrase_tokens:
                 total_loaded_tokens += phrase_length
