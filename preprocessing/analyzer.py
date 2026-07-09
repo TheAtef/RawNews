@@ -30,6 +30,9 @@ ATTRIBUTION_MARKERS: List[str] = [
 reverse_statement_map = {v: k for k, v in STATEMENT_MAP.items()}
 reverse_propaganda_map = {v: k for k, v in PROPAGANDA_MAP.items()}
 reverse_attribution_map = {v: k for k, v in ATTRIBUTION_MAP.items()}
+# preprocessing/analyzer.py
+
+from train.prepare_data import REVERSE_MAPS, NUM_CLASSES
 
 class AraBERTClassifier:
     def __init__(self) -> None:
@@ -47,7 +50,7 @@ class AraBERTClassifier:
         if not self.enabled or not text.strip():
             return {
                 "propaganda_label": "neutral",
-                "statement_type": "fact",
+                "statement_type": "reporting",
                 "attribution_label": "unsupported_claim"
             }
 
@@ -58,9 +61,12 @@ class AraBERTClassifier:
             outputs = self.model(**inputs)
             logits = outputs.logits.squeeze(0)
 
-            statement_logits = logits[: len(STATEMENT_MAP)]
-            propaganda_logits = logits[len(STATEMENT_MAP) : len(STATEMENT_MAP) + len(PROPAGANDA_MAP)]
-            attribution_logits = logits[-len(ATTRIBUTION_MAP) :]
+            st_len = NUM_CLASSES["statement_type"]
+            pr_len = NUM_CLASSES["propaganda"]
+
+            statement_logits = logits[:st_len]
+            propaganda_logits = logits[st_len : st_len + pr_len]
+            attribution_logits = logits[st_len + pr_len :]
 
             statement_probs = torch.softmax(statement_logits, dim=-1)
             propaganda_probs = torch.softmax(propaganda_logits, dim=-1)
@@ -71,20 +77,18 @@ class AraBERTClassifier:
             attribution_idx = int(torch.argmax(attribution_probs).item())
 
             return {
-                "propaganda_label": reverse_propaganda_map[propaganda_idx],
-                "statement_type":  reverse_statement_map[statement_idx],
-                "attribution_label": reverse_attribution_map[attribution_idx]
+                "propaganda_label": REVERSE_MAPS["propaganda"][propaganda_idx],
+                "statement_type":  REVERSE_MAPS["statement_type"][statement_idx],
+                "attribution_label": REVERSE_MAPS["attribution"][attribution_idx]
             }
 
         except Exception as e:
             logger.error("arabert_classification_error", error=str(e))
             return {
                 "propaganda_label": "neutral",
-                "statement_type": "fact",
+                "statement_type": "reporting",
                 "attribution_label": "unsupported_claim"
             }
-
-
 class HeuristicScorer:
     def __init__(self, source_registry: Dict[str, float] = None):
         self.source_registry = source_registry if source_registry is not None else SOURCE_AUTHORITY

@@ -32,7 +32,19 @@ ATTRIBUTION_MAP = {
     "unsupported_claim": 1
 }
 
-GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
+NUM_CLASSES = {
+    "statement_type": len(set(STATEMENT_MAP.values())), 
+    "propaganda": len(set(PROPAGANDA_MAP.values())),     
+    "attribution": len(set(ATTRIBUTION_MAP.values()))    
+}
+
+REVERSE_MAPS = {
+    "propaganda": {0: "neutral", 1: "propaganda"},
+    "statement_type": {0: "reporting", 1: "opinion"},
+    "attribution": {0: "supported_claim", 1: "unsupported_claim"}
+}
+
+GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="Qwen/Qwen3.5-0.8B")
 
 ########################################
 GLOBAL_CLEANER = ArabicNewsCleaner()
@@ -54,7 +66,7 @@ def load_file_to_df(file_path: str) -> pd.DataFrame:
         raise ValueError("Unsupported file format. Please provide a .json or .jsonl file.")
 
 
-def _extract_head_tail(text: str, max_words: int = 350) -> str:
+def _extract_head_tail(text: str, max_words: int = 750) -> str:
     if not text:
         return ""
     words = text.split()
@@ -64,24 +76,28 @@ def _extract_head_tail(text: str, max_words: int = 350) -> str:
     return " ".join(words[:half]) + " ... " + " ".join(words[-half:])
 
 
-def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor) -> tuple[str, str]:
+def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor = None) -> tuple[str, str]:
     title = ""
     content = ""
     
     if "optimized_text" in row and pd.notna(row["optimized_text"]):
         parts = str(row["optimized_text"]).split(" [SEP] ")
         if len(parts) == 2:
-            title = preprocessor.preprocess(parts[0])
-            content = preprocessor.preprocess(parts[1])
+            title = parts[0]
+            content = parts[1]
         else:
-            content = preprocessor.preprocess(str(row["optimized_text"]))
+            content = str(row["optimized_text"])
     else:
         raw_title = str(row.get("title") or "").strip()
         raw_content = str(row.get("text") or row.get("content") or "").strip()
-        title = preprocessor.preprocess(raw_title) if raw_title else ""
-        content = preprocessor.preprocess(raw_content) if raw_content else ""
+        title = raw_title if raw_title else ""
+        content = raw_content if raw_content else ""
 
-    content = _extract_head_tail(content, max_words=350)
+    if preprocessor is not None:
+        title = preprocessor.preprocess(title) if title else ""
+        content = preprocessor.preprocess(content) if content else ""
+
+    content = _extract_head_tail(content, max_words=750)
     
     if not title.strip():
         title = "بدون عنوان"
@@ -89,7 +105,7 @@ def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor
     return title, content
 
 
-def _preprocess_sequence(row: pd.Series, preprocessor: ArabertPreprocessor) -> str:
+def _preprocess_sequence(row: pd.Series, preprocessor: ArabertPreprocessor = None) -> str:
     title, content = _preprocess_sequence_split(row, preprocessor)
     if title and content:
         return f"{title} [SEP] {content}"
@@ -99,7 +115,7 @@ def _preprocess_sequence(row: pd.Series, preprocessor: ArabertPreprocessor) -> s
 def prepare_single_dataset(
     df: pd.DataFrame, 
     target_task: str, 
-    preprocessor: ArabertPreprocessor = GLOBAL_PREPROCESSOR
+    preprocessor: ArabertPreprocessor = None
 ) -> Dataset:
     processed_records = []
     
@@ -141,7 +157,7 @@ def prepare_single_dataset(
 
 def prepare_multitask_dataset(
     df: pd.DataFrame, 
-    preprocessor: ArabertPreprocessor = GLOBAL_PREPROCESSOR
+    preprocessor: ArabertPreprocessor = None
 ) -> Dataset:
     processed_records = []
     
@@ -171,7 +187,16 @@ def prepare_multitask_dataset(
             raw_attribution not in ATTRIBUTION_MAP):
             continue
 
+        text = f"العنوان: {title}\nالمحتوى: {content}"
+        label = [
+            float(PROPAGANDA_MAP[raw_propaganda]),
+            float(STATEMENT_MAP[raw_statement]),
+            float(ATTRIBUTION_MAP[raw_attribution])
+        ]
+
         processed_records.append({
+            "text": text,
+            "label": label,
             "title": title,
             "content": content,
             "loaded_words_ratio":loaded_words_ratio,
