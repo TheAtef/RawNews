@@ -5,6 +5,13 @@ import pandas as pd
 from datasets import Dataset
 from arabert.preprocess import ArabertPreprocessor
 
+########################################
+from preprocessing.cleaner import ArabicNewsCleaner
+from preprocessing.normalizer import ArabicNormalizer
+from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
+from preprocessing.propaganda_features import calculate_loaded_words_ratio
+############################################
+
 logger = logging.getLogger(__name__)
 
 PROPAGANDA_MAP = {
@@ -26,6 +33,13 @@ ATTRIBUTION_MAP = {
 }
 
 GLOBAL_PREPROCESSOR = ArabertPreprocessor(model_name="aubmindlab/bert-base-arabertv02")
+
+########################################
+GLOBAL_CLEANER = ArabicNewsCleaner()
+GLOBAL_NORMALIZER = ArabicNormalizer()
+GLOBAL_TOKENIZER = ArabicTokenizer()
+GLOBAL_STOP_FILTER = ArabicStopwordFilter()
+#############################################
 
 
 def load_file_to_df(file_path: str) -> pd.DataFrame:
@@ -135,7 +149,19 @@ def prepare_multitask_dataset(
         title, content = _preprocess_sequence_split(row, preprocessor)
         if not content.strip():
             continue
+##############################################
+        # raw_title = str(row.get("title") or "")
+        # raw_content = str(row.get("text") or row.get("content") or "")
 
+        feature_text = f"{title} {content}"
+
+        cleaned_feature_text = GLOBAL_CLEANER.clean(feature_text)
+        normalized_feature_text = GLOBAL_NORMALIZER.normalize(cleaned_feature_text)
+
+        feature_tokens = GLOBAL_TOKENIZER.tokenize(normalized_feature_text)
+
+        loaded_words_ratio = calculate_loaded_words_ratio( feature_tokens)
+###################################
         raw_statement = row.get("statement_type")
         raw_propaganda = row.get("propaganda_label")
         raw_attribution = row.get("attribution_label")
@@ -148,9 +174,11 @@ def prepare_multitask_dataset(
         processed_records.append({
             "title": title,
             "content": content,
+            "loaded_words_ratio":loaded_words_ratio,
             "statement_type_label": STATEMENT_MAP[raw_statement],
             "propaganda_label": PROPAGANDA_MAP[raw_propaganda],
             "attribution_label": ATTRIBUTION_MAP[raw_attribution],
+
         })
 
     return Dataset.from_list(processed_records)

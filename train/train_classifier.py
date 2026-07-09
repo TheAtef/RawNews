@@ -55,10 +55,10 @@ class MultiHeadAraBERT(nn.Module):
         self.dropout = nn.Dropout(0.15)
         
         self.statement_head = nn.Linear(self.config.hidden_size, len(STATEMENT_MAP))
-        self.propaganda_head = nn.Linear(self.config.hidden_size, len(PROPAGANDA_MAP))
+        self.propaganda_head = nn.Linear(self.config.hidden_size+1, len(PROPAGANDA_MAP))
         self.attribution_head = nn.Linear(self.config.hidden_size, len(ATTRIBUTION_MAP))
 
-    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None,loaded_words_ratio=None, labels=None):
         outputs = self.bert(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -72,8 +72,23 @@ class MultiHeadAraBERT(nn.Module):
         pooled_output = self.dropout(pooled_output)
         
         st_logits = self.statement_head(pooled_output)
-        pr_logits = self.propaganda_head(pooled_output)
+        # pr_logits = self.propaganda_head(pooled_output)
         at_logits = self.attribution_head(pooled_output)
+        if loaded_words_ratio is None:
+            loaded_words_ratio = torch.zeros(
+                pooled_output.size(0),
+                1,
+                device=pooled_output.device
+            )
+        else:
+            loaded_words_ratio = loaded_words_ratio.float().view(-1, 1)
+
+        propaganda_features = torch.cat(
+            [pooled_output, loaded_words_ratio],
+            dim=-1
+        )
+
+        pr_logits = self.propaganda_head(propaganda_features)
         
         logits = torch.cat([st_logits, pr_logits, at_logits], dim=-1)
         
@@ -181,6 +196,57 @@ def run_classifier_training(
 
     train_ds = prepare_multitask_dataset(train_df)
     eval_ds = prepare_multitask_dataset(test_df)
+    ratios = train_ds["loaded_words_ratio"]
+    neutral_ratios = [
+        row["loaded_words_ratio"]
+        for row in train_ds
+        if row["propaganda_label"] == 0
+    ]
+
+    propaganda_ratios = [
+        row["loaded_words_ratio"]
+        for row in train_ds
+        if row["propaganda_label"] == 1
+    ]
+
+    print("=" * 50)
+
+    print("Neutral records:", len(neutral_ratios))
+    print(
+        "Neutral average loaded ratio:",
+        sum(neutral_ratios) / len(neutral_ratios)
+    )
+
+    print("Propaganda records:", len(propaganda_ratios))
+    print(
+        "Propaganda average loaded ratio:",
+        sum(propaganda_ratios) / len(propaganda_ratios)
+    )
+
+    print("=" * 50)
+
+    non_zero_ratios = [
+        ratio for ratio in ratios
+        if ratio > 0
+    ]
+
+    print("Total records:", len(ratios))
+    print("Non-zero loaded ratios:", len(non_zero_ratios))
+
+    if non_zero_ratios:
+        print("Max loaded ratio:", max(non_zero_ratios))
+        print(
+            "Average non-zero ratio:",
+            sum(non_zero_ratios) / len(non_zero_ratios)
+        )
+    print(train_ds.column_names)
+
+    print(train_ds[0])
+
+    print(
+        "Loaded words ratio:",
+        train_ds[0]["loaded_words_ratio"]
+    )
 
     def tokenize_fn(examples):
         return tokenizer(
@@ -266,7 +332,8 @@ def run_classifier_training(
         greater_is_better=True,
         fp16=True,                     
         logging_steps=50,
-        dataloader_num_workers=4,          
+        dataloader_num_workers=4, 
+        remove_unused_columns=False         
     )
     
     data_collator = DataCollatorWithPadding(tokenizer)

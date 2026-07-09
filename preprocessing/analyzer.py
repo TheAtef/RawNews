@@ -6,7 +6,8 @@ import structlog
 from typing import List, Dict, Set, Optional
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
 from core.config import settings
-from core.constants import BIAS_INDICATORS
+from preprocessing.propaganda_features import (LOADED_WORDS,calculate_loaded_words_ratio,)
+# from core.constants import BIAS_INDICATORS
 from core.sources_list import ARABIC_NEWS_SOURCES
 from train.prepare_data import ATTRIBUTION_MAP, PROPAGANDA_MAP, STATEMENT_MAP
 
@@ -17,9 +18,9 @@ SOURCE_AUTHORITY: Dict[str, float] = {
     source.name: source.reliability_score for source in ARABIC_NEWS_SOURCES
 }
 
-LOADED_WORDS: Set[str] = set()
-for category_dict in BIAS_INDICATORS.values():
-    LOADED_WORDS.update(category_dict.keys())
+# LOADED_WORDS: Set[str] = set()
+# for category_dict in BIAS_INDICATORS.values():
+#     LOADED_WORDS.update(category_dict.keys())
 
 ATTRIBUTION_MARKERS: List[str] = [
     "وفقاً لـ", "حسب بيان", "أعلنت وزارة", "صرح", "أكد", "نقلت عن", "قالت", "ذكر", "أوضح", "أشار"
@@ -92,13 +93,11 @@ class HeuristicScorer:
         return self.source_registry.get(source_name, 0.40)
 
     def calculate_neutrality_score(self, tokens: List[str]) -> float:
-        if not tokens:
-            return 1.0
-        loaded_count = sum(1 for token in tokens if token in LOADED_WORDS)
-        density = loaded_count / len(tokens)
-        score = max(0.0, 1.0 - (density * 15.0))
-        return round(score, 2)
+        density = calculate_loaded_words_ratio(tokens)
 
+        score = max(0.0, 1.0 - (density * 15.0))
+
+        return round(score, 2)
     def calculate_attribution_score(self, text: str) -> float:
         score = 0.0
         quotes = re.findall(r'["«»“”]', text)
