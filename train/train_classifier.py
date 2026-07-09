@@ -1,6 +1,8 @@
 from __future__ import annotations
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import sys
+import gc
 import torch
 import evaluate
 import inspect
@@ -8,11 +10,10 @@ from tqdm import tqdm
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
-    TrainingArguments,
     BitsAndBytesConfig,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer
+from peft import LoraConfig, prepare_model_for_kbit_training
+from trl import SFTTrainer, SFTConfig
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.abspath(os.path.join(script_dir, "..")))
@@ -20,7 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(script_dir, "..")))
 from train.prepare_data import load_file_to_df, prepare_multitask_dataset
 
 
-MODEL_NAME = "Qwen/Qwen3-1.7B"
+MODEL_NAME = "Qwen/Qwen3.5-0.8B"
 
 TRAIN_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl"))
 TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl"))
@@ -99,7 +100,6 @@ def run_classifier_training(task_name: str = "multitask"):
     train_ds = train_ds.map(lambda batch: format_prompts(batch, tokenizer), batched=True)
     eval_ds = eval_ds.map(lambda batch: format_prompts(batch, tokenizer), batched=True)
 
-    print("Configuring QLoRA 4-bit Quantization (RTX 4050 Optimized)...")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_use_double_quant=True,
@@ -125,18 +125,17 @@ def run_classifier_training(task_name: str = "multitask"):
         bias="none",
         task_type="CAUSAL_LM"
     )
-    model = get_peft_model(model, peft_config)
 
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=f"./train/checkpoints/{task_name}_model",
         learning_rate=2e-4,         
         num_train_epochs=3,             
-        per_device_train_batch_size=1,    
-        per_device_eval_batch_size=1,      
-        gradient_accumulation_steps=16, 
+        per_device_train_batch_size=2,    
+        per_device_eval_batch_size=2,      
+        gradient_accumulation_steps=8, 
         max_grad_norm=0.3,                
         weight_decay=0.01,
-        warmup_ratio=0.03,              
+        warmup_steps=100,              
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
@@ -146,7 +145,10 @@ def run_classifier_training(task_name: str = "multitask"):
         logging_steps=10,
         gradient_checkpointing=True, 
         save_total_limit=1,
-        report_to="none"
+        report_to="none",
+        dataset_text_field="text",
+        max_length=512, 
+        loss_type="chunked_nll",
     )
 
     trainer = SFTTrainer(
@@ -154,19 +156,23 @@ def run_classifier_training(task_name: str = "multitask"):
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         peft_config=peft_config,
-        dataset_text_field="text",
-        max_seq_length=768, 
-        tokenizer=tokenizer,
+        processing_class=tokenizer, 
         args=training_args,
     )
 
     print("Starting training session on local GPU...")
     trainer.train()
 
+    model = trainer.model
+
     save_path = f"./train/models/fine_tuned_llm_{task_name}"
-    trainer.model.save_pretrained(save_path)
+    model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
     print(f"Adapters successfully saved to: {save_path}")
+
+    del trainer
+    torch.cuda.empty_cache()
+    gc.collect()
 
     print("\nRunning post-training evaluation on test set...")
     model.eval()

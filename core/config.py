@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     device: str = "cuda"  
     
     # arabert configurations for analysis and clustering
-    embedding_model_id: str = "aubmindlab/bert-base-arabertv02"
+    embedding_model_id: str = "Qwen/Qwen3.5-0.8B"
     sentiment_model_id: str = "./train/models/fine_tuned_arabert_statement_type"
     multi_sentiment_model_id: str = "./train/train/models/fine_tuned_arabert_multitask"
 
