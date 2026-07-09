@@ -28,13 +28,15 @@ TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "
 
 def format_prompts(batch, tokenizer):
     formatted_texts = []
-    for title, content, st, pr, at in zip(
-        batch["title"], 
-        batch["content"], 
-        batch["statement_type_label"], 
-        batch["propaganda_label"], 
+    for title, content, loaded_ratio, st, pr, at in zip(
+        batch["title"],
+        batch["content"],
+        batch["loaded_words_ratio"],
+        batch["statement_type_label"],
+        batch["propaganda_label"],
         batch["attribution_label"]
     ):
+        loaded_ratio_percent = loaded_ratio * 100
         st_str = "reporting" if st == 0 else "opinion"
         pr_str = "neutral" if pr == 0 else "propaganda"
         at_str = "supported_claim" if at == 0 else "unsupported_claim"
@@ -44,16 +46,26 @@ def format_prompts(batch, tokenizer):
         at_reason = "الادعاءات الواردة في النص يتم إسنادها بوضوح إلى مصادر محددة، وثائق، أو جهات مسؤولة تدعم صحتها." if at == 0 else "الادعاءات تُطرح بشكل مرسل دون الإشارة إلى مصادر واضحة، شهادات موثوقة، أو أدلة تدعمها."
         
         system_content = (
-            "أنت مساعد ذكي متخصص في تصنيف النصوص الإخبارية العربية بدقة. قم بتحليل العنوان والمحتوى الإخباري وصنفهم لثلاثة مهام:\n"
-            "1. نوع العبارة (statement_type): إما reporting أو opinion\n"
-            "2. البروباغندا (propaganda): إما neutral أو propaganda\n"
-            "3. الإسناد (attribution): إما supported_claim أو unsupported_claim\n\n"
-            "يجب أن تبدأ إجابتك بخطوة تحليل قصيرة (تحليل النص:)، ثم تكتب التقييم النهائي بالصيغة التالية بالضبط:\n"
-            "التقييم النهائي: [نوع العبارة] | [البروباغندا] | [الإسناد]"
-        )
+        "أنت مساعد ذكي متخصص في تصنيف النصوص الإخبارية العربية بدقة. "
+        "قم بتحليل العنوان والمحتوى الإخباري وصنفهم لثلاثة مهام:\n"
+        "1. نوع العبارة (statement_type): إما reporting أو opinion\n"
+        "2. البروباغندا (propaganda): إما neutral أو propaganda\n"
+        "3. الإسناد (attribution): إما supported_claim أو unsupported_claim\n\n"
+        "قد يتم تزويدك بميزات لغوية محسوبة آلياً مثل نسبة الكلمات والعبارات "
+        "المشحونة عاطفياً. استخدم هذه الميزات كإشارات مساعدة ضمن تحليل السياق، "
+        "ولا تعتبرها دليلاً حاسماً بمفردها على وجود البروباغندا.\n\n"
+        "يجب أن تبدأ إجابتك بخطوة تحليل قصيرة (تحليل النص:)، ثم تكتب التقييم النهائي "
+        "بالصيغة التالية بالضبط:\n"
+        "التقييم النهائي: [نوع العبارة] | [البروباغندا] | [الإسناد]"
+    )
         
-        user_content = f"العنوان: {title}\nالمحتوى: {content}"
-        
+        user_content = (
+            f"العنوان: {title}\n"
+            f"المحتوى: {content}\n\n"
+            f"ميزات لغوية محسوبة آلياً:\n"
+            f"- نسبة الكلمات والعبارات المشحونة عاطفياً: "
+            f"{loaded_ratio_percent:.4f}%"
+        )        
         assistant_content = (
             f"تحليل النص:\n"
             f"1. نوع العبارة: {st_reason}\n"
@@ -130,25 +142,10 @@ def run_classifier_training(task_name: str = "multitask"):
         if ratio > 0
     ]
 
-    print("Total records:", len(ratios))
-    print("Non-zero loaded ratios:", len(non_zero_ratios))
 
-    if non_zero_ratios:
-        print("Max loaded ratio:", max(non_zero_ratios))
-        print(
-            "Average non-zero ratio:",
-            sum(non_zero_ratios) / len(non_zero_ratios)
-        )
-    print(train_ds.column_names)
-
-    print(train_ds[0])
-
-    print(
-        "Loaded words ratio:",
-        train_ds[0]["loaded_words_ratio"]
-    )
 
     train_ds = train_ds.map(lambda batch: format_prompts(batch, tokenizer), batched=True)
+
     eval_ds = eval_ds.map(lambda batch: format_prompts(batch, tokenizer), batched=True)
 
     bnb_config = BitsAndBytesConfig(

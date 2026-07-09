@@ -6,7 +6,7 @@ import structlog
 from typing import List, Dict, Set, Optional
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
 from core.config import settings
-from preprocessing.propaganda_features import (LOADED_WORDS,calculate_loaded_words_ratio,)
+from preprocessing.propaganda_features import (LOADED_PHRASES,calculate_loaded_words_ratio,)
 # from core.constants import BIAS_INDICATORS
 from core.sources_list import ARABIC_NEWS_SOURCES
 from train.prepare_data import ATTRIBUTION_MAP, PROPAGANDA_MAP, STATEMENT_MAP
