@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(script_dir, "..")))
 
 from train.prepare_data import load_file_to_df, prepare_multitask_dataset
 
-BASE_MODEL_NAME = "Qwen/Qwen3-1.7B"
+BASE_MODEL_NAME = "Qwen/Qwen3.5-0.8B"
 MULTITASK_PATH = "./train/models/fine_tuned_llm_multitask"
 AUDIT_TARGET_DATASET = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl"))
 OUTPUT_CSV_REPORT = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "flagged_errors.csv"))
