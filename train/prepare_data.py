@@ -1,8 +1,10 @@
+
 from __future__ import annotations
 import os
 import logging
+import json
 import pandas as pd
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from arabert.preprocess import ArabertPreprocessor
 
 from preprocessing.cleaner import ArabicNewsCleaner
@@ -10,6 +12,7 @@ from preprocessing.normalizer import ArabicNormalizer
 from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
 from preprocessing.propaganda_features import calculate_loaded_words_ratio
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 MAX_CONTENT_WORDS = 200
@@ -50,9 +53,85 @@ GLOBAL_TOKENIZER = ArabicTokenizer()
 GLOBAL_STOP_FILTER = ArabicStopwordFilter()
 
 
+def bootstrap_armpro_single_file(file_path: str):
+
+    logger.info("Initializing automatic download and mapping of QCRI/ArmPro (binary config)...")
+    
+    # Ensure local directory structure exists
+    dir_name = os.path.dirname(file_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+
+    try:
+        ds = load_dataset("QCRI/ArmPro", "binary")
+    except Exception as e:
+        logger.error(f"Could not load 'QCRI/ArmPro' (binary config) from Hugging Face: {e}")
+        raise e
+
+    available_splits = list(ds.keys())
+    file_name = os.path.basename(file_path).lower()
+    
+    if "test" in file_name or "eval" in file_name:
+        hf_split = "test" if "test" in available_splits else available_splits[-1]
+    elif "val" in file_name or "dev" in file_name:
+        hf_split = "dev" if "dev" in available_splits else ("validation" if "validation" in available_splits else available_splits[-1])
+    else:
+        hf_split = "train" if "train" in available_splits else available_splits[0]
+
+    data_split = ds[hf_split]
+    logger.info(f"Mapping split '{hf_split}' onto {file_path}...")
+
+    possible_text_cols = ["paragraph", "text", "content", "sentence"]
+    text_col = next((c for c in possible_text_cols if c in data_split.column_names), data_split.column_names[0])
+    
+    possible_label_cols = ["label", "coarse_label", "propaganda_label", "class", "is_propaganda"]
+    label_col = next((c for c in possible_label_cols if c in data_split.column_names), None)
+
+    records = []
+    for row in data_split:
+        raw_text = str(row.get(text_col) or "").strip()
+        if not raw_text:
+            continue
+            
+        raw_label = row.get(label_col) if label_col else None
+        
+        val_str = str(raw_label).lower().strip()
+        
+        if "non-propagandistic" in val_str or val_str in ["false", "0", "neutral", "no", "non_propaganda"]:
+            mapped_propaganda = "neutral"
+        elif "propagandistic" in val_str or val_str in ["true", "1", "yes", "propaganda"]:
+            mapped_propaganda = "propaganda"
+        else:
+            mapped_propaganda = "neutral"
+
+        if mapped_propaganda == "propaganda":
+            mapped_statement = "opinion"
+            mapped_attribution = "unsupported_claim"
+        else:
+            mapped_statement = "reporting"
+            mapped_attribution = "supported_claim"
+
+        records.append({
+            "text": raw_text,
+            "propaganda_label": mapped_propaganda,
+            "statement_type": mapped_statement,
+            "attribution_label": mapped_attribution
+        })
+
+    logger.info(f"Writing {len(records)} mapped records to {file_path}...")
+    with open(file_path, "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
 def load_file_to_df(file_path: str) -> pd.DataFrame:
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Target dataset file was not found at: {file_path}")
+        logger.info(f"Target dataset file was not found at: {file_path}. Initiating automatic fallback/bootstrap from QCRI/ArmPro...")
+        try:
+            bootstrap_armpro_single_file(file_path)
+        except Exception as e:
+            logger.error(f"Failed to automatically bootstrap from QCRI/ArmPro: {e}")
+            raise FileNotFoundError(f"Target dataset file was not found at: {file_path}")
 
     if file_path.endswith(".jsonl"):
         return pd.read_json(file_path, lines=True, convert_dates=False)

@@ -21,8 +21,8 @@ from train.prepare_data import load_file_to_df, prepare_multitask_dataset
 from train.prompt_utils import build_messages, parse_output
 
 MODEL_NAME = "Qwen/Qwen3.5-0.8B"
-MAX_SEQ_LENGTH = 1024
-MAX_EVAL_INPUT_TOKENS = 1024
+MAX_SEQ_LENGTH = 512
+MAX_EVAL_INPUT_TOKENS = 512
 
 TRAIN_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl"))
 TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl"))
@@ -91,8 +91,9 @@ def run_classifier_training(task_name: str = "multitask"):
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True
+        device_map={"": 0},   
+        trust_remote_code=True,
+        attn_implementation="sdpa"  
     )
 
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -109,10 +110,10 @@ def run_classifier_training(task_name: str = "multitask"):
     training_args = SFTConfig(
         output_dir=f"./train/checkpoints/{task_name}_model",
         learning_rate=2e-4,
-        num_train_epochs=3,
-        per_device_train_batch_size=2,
-        per_device_eval_batch_size=2,
-        gradient_accumulation_steps=8,
+        num_train_epochs=2,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
+        gradient_accumulation_steps=4,  
         max_grad_norm=0.3,
         weight_decay=0.01,
         warmup_steps=100,
@@ -129,6 +130,7 @@ def run_classifier_training(task_name: str = "multitask"):
         dataset_text_field="text",
         max_length=MAX_SEQ_LENGTH,
         completion_only_loss=True,
+        optim="paged_adamw_8bit",    
     )
 
     trainer = SFTTrainer(

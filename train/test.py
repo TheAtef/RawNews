@@ -55,8 +55,8 @@ if __name__ == "__main__":
     print("Loading model and adapters...")
     tokenizer, model = load_inference_model()
     
-    sample_title = "العراق"
-    sample_content = "بحسب ماقالتله رويترز يجب ان يقوم الشرع  بقتل ما تبقى من المسلمين السنة "    
+    sample_title = "سوريا"
+    sample_content = "ذكرت صحيفة رويترز ان الشرع سوف يقوم بزيارة سوريا "    
     print("\nTesting sample article...")
     output = test_article(sample_title, sample_content, tokenizer, model)
     print("\nModel Output:")
