@@ -1,16 +1,18 @@
-
-from __future__ import annotations
 import os
 import logging
 import json
+import re
 import pandas as pd
 from datasets import Dataset, load_dataset
 from arabert.preprocess import ArabertPreprocessor
+from typing import List, Dict, Any
 
 from preprocessing.cleaner import ArabicNewsCleaner
 from preprocessing.normalizer import ArabicNormalizer
 from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
 from preprocessing.propaganda_features import calculate_loaded_words_ratio
+from preprocessing.ner import NER
+from core.constants import PROPAGANDA_PATTERNS, BIAS_INDICATORS, ARABIC_BOILERPLATE_KEYWORDS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -51,13 +53,105 @@ GLOBAL_CLEANER = ArabicNewsCleaner()
 GLOBAL_NORMALIZER = ArabicNormalizer()
 GLOBAL_TOKENIZER = ArabicTokenizer()
 GLOBAL_STOP_FILTER = ArabicStopwordFilter()
+GLOBAL_NER = NER()
 
+def clean_and_strip_boilerplate(text: str) -> str:
+    if not text:
+        return ""
+    sentences = re.split(r'(?<=[.؟!])\s+', text)
+    cleaned_sentences = []
+    for sent in sentences:
+        match_count = sum(1 for kw in ARABIC_BOILERPLATE_KEYWORDS if kw in sent)
+        if match_count < 2:
+            cleaned_sentences.append(sent)
+    return " ".join(cleaned_sentences)
+
+def count_subjective_markers(text: str) -> int:
+    subjective_words = ["أنا", "نحن", "أرى", "أعتقد", "نعتقد", "نرى", "في رأيي", "برأيي"]
+    count = 0
+    for word in subjective_words:
+        count += len(re.findall(r'\b' + re.escape(word) + r'\b', text))
+    return count
+
+def get_entity_features(text: str) -> Dict[str, int]:
+    try:
+        entities = GLOBAL_NER.extract_entities(text)
+        total_entities = (
+            len(entities.get("person", [])) + 
+            len(entities.get("location", [])) + 
+            len(entities.get("organization", []))
+        )
+        return {
+            "entity_count": total_entities,
+            "unique_orgs_count": len(entities.get("organization", []))
+        }
+    except Exception:
+        return {"entity_count": 0, "unique_orgs_count": 0}
+
+def sentence_aware_head_tail(text: str, max_words: int = 200) -> str:
+    if not text:
+        return ""
+    sentences = re.split(r'(?<=[.؟!])\s+', text)
+    word_count = 0
+    head_sentences = []
+    
+    for sent in sentences:
+        sent_words = len(sent.split())
+        if word_count + sent_words <= max_words // 2:
+            head_sentences.append(sent)
+            word_count += sent_words
+        else:
+            break
+            
+    tail_sentences = []
+    tail_word_count = 0
+    for sent in reversed(sentences):
+        sent_words = len(sent.split())
+        if tail_word_count + sent_words <= max_words // 2:
+            tail_sentences.insert(0, sent)
+            tail_word_count += sent_words
+        else:
+            break
+            
+    if not head_sentences and not tail_sentences:
+        return " ".join(text.split()[:max_words])
+        
+    return " ".join(head_sentences) + " ... " + " ".join(tail_sentences)
+
+def extract_advanced_features(title: str, content: str, tokens: List[str]) -> Dict[str, Any]:
+    full_text = f"{title} {content}"
+    normalized_tokens = [GLOBAL_NORMALIZER.normalize(t).strip() for t in tokens if t.strip()]
+    total_tokens = len(normalized_tokens) or 1
+
+    quotes_count = len(re.findall(r'["«»“”]', full_text))
+    attribution_markers = ["وفقاً لـ", "حسب بيان", "أعلنت وزارة", "صرح", "أكد", "نقلت عن", "قالت", "ذكر", "أوضح", "أشار"]
+    markers_found = sum(1 for marker in attribution_markers if marker in full_text)
+
+    detected_patterns = []
+    for p in PROPAGANDA_PATTERNS:
+        if re.search(p["pattern"], full_text):
+            detected_patterns.append(p["type"])
+
+    bias_breakdown = {}
+    for category, words_dict in BIAS_INDICATORS.items():
+        normalized_keys = {GLOBAL_NORMALIZER.normalize(k).strip() for k in words_dict.keys()}
+        matched_count = sum(1 for t in normalized_tokens if t in normalized_keys)
+        bias_breakdown[category] = matched_count / total_tokens
+
+    entity_feats = get_entity_features(content)
+    subjective_count = count_subjective_markers(full_text)
+
+    return {
+        "quotes_count": quotes_count,
+        "markers_count": markers_found,
+        "detected_patterns": list(set(detected_patterns)),
+        "bias_breakdown": bias_breakdown,
+        "entity_count": entity_feats["entity_count"],
+        "unique_orgs_count": entity_feats["unique_orgs_count"],
+        "subjective_markers_count": subjective_count
+    }
 
 def bootstrap_armpro_single_file(file_path: str):
-
-    logger.info("Initializing automatic download and mapping of QCRI/ArmPro (binary config)...")
-    
-    # Ensure local directory structure exists
     dir_name = os.path.dirname(file_path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -94,7 +188,6 @@ def bootstrap_armpro_single_file(file_path: str):
             continue
             
         raw_label = row.get(label_col) if label_col else None
-        
         val_str = str(raw_label).lower().strip()
         
         if "non-propagandistic" in val_str or val_str in ["false", "0", "neutral", "no", "non_propaganda"]:
@@ -123,7 +216,6 @@ def bootstrap_armpro_single_file(file_path: str):
         for rec in records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-
 def load_file_to_df(file_path: str) -> pd.DataFrame:
     if not os.path.exists(file_path):
         logger.info(f"Target dataset file was not found at: {file_path}. Initiating automatic fallback/bootstrap from QCRI/ArmPro...")
@@ -139,17 +231,6 @@ def load_file_to_df(file_path: str) -> pd.DataFrame:
         return pd.read_json(file_path, convert_dates=False)
     else:
         raise ValueError("Unsupported file format. Please provide a .json or .jsonl file.")
-
-
-def _extract_head_tail(text: str, max_words: int = MAX_CONTENT_WORDS) -> str:
-    if not text:
-        return ""
-    words = text.split()
-    if len(words) <= max_words:
-        return text
-    half = max_words // 2
-    return " ".join(words[:half]) + " ... " + " ".join(words[-half:])
-
 
 def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor = None) -> tuple[str, str]:
     title = ""
@@ -172,20 +253,18 @@ def _preprocess_sequence_split(row: pd.Series, preprocessor: ArabertPreprocessor
         title = preprocessor.preprocess(title) if title else ""
         content = preprocessor.preprocess(content) if content else ""
 
-    content = _extract_head_tail(content, max_words=MAX_CONTENT_WORDS)
+    content = sentence_aware_head_tail(content, max_words=MAX_CONTENT_WORDS)
 
     if not title.strip():
         title = "بدون عنوان"
 
     return title, content
 
-
 def _preprocess_sequence(row: pd.Series, preprocessor: ArabertPreprocessor = None) -> str:
     title, content = _preprocess_sequence_split(row, preprocessor)
     if title and content:
         return f"{title} [SEP] {content}"
     return title or content
-
 
 def prepare_single_dataset(
     df: pd.DataFrame,
@@ -229,7 +308,6 @@ def prepare_single_dataset(
 
     return Dataset.from_list(processed_records)
 
-
 def prepare_multitask_dataset(
     df: pd.DataFrame,
     preprocessor: ArabertPreprocessor = None
@@ -241,12 +319,20 @@ def prepare_multitask_dataset(
         if not content.strip():
             continue
 
-        feature_text = f"{title} {content}"
+        content = clean_and_strip_boilerplate(content)
+        
+        cleaned_title = GLOBAL_CLEANER.clean(title)
+        normalized_title = GLOBAL_NORMALIZER.normalize(cleaned_title)
 
-        cleaned_feature_text = GLOBAL_CLEANER.clean(feature_text)
-        normalized_feature_text = GLOBAL_NORMALIZER.normalize(cleaned_feature_text)
-        feature_tokens = GLOBAL_TOKENIZER.tokenize(normalized_feature_text)
-        loaded_words_ratio = calculate_loaded_words_ratio(feature_tokens)
+        cleaned_content = GLOBAL_CLEANER.clean(content)
+        normalized_content = GLOBAL_NORMALIZER.normalize(cleaned_content)
+
+        feature_text = f"{normalized_title} {normalized_content}"
+        feature_tokens = GLOBAL_TOKENIZER.tokenize(feature_text)
+        filtered_tokens = GLOBAL_STOP_FILTER.filter(feature_tokens)
+
+        features = extract_advanced_features(normalized_title, normalized_content, filtered_tokens)
+        loaded_words_ratio = calculate_loaded_words_ratio(filtered_tokens)
 
         raw_statement = row.get("statement_type")
         raw_propaganda = row.get("propaganda_label")
@@ -257,19 +343,11 @@ def prepare_multitask_dataset(
             raw_attribution not in ATTRIBUTION_MAP):
             continue
 
-        text = f"العنوان: {title}\nالمحتوى: {content}"
-        label = [
-            float(PROPAGANDA_MAP[raw_propaganda]),
-            float(STATEMENT_MAP[raw_statement]),
-            float(ATTRIBUTION_MAP[raw_attribution])
-        ]
-
         processed_records.append({
-            "text": text,
-            "label": label,
-            "title": title,
-            "content": content,
+            "title": normalized_title,
+            "content": normalized_content,
             "loaded_words_ratio": loaded_words_ratio,
+            "features_json": json.dumps(features, ensure_ascii=False),
             "statement_type_label": STATEMENT_MAP[raw_statement],
             "propaganda_label": PROPAGANDA_MAP[raw_propaganda],
             "attribution_label": ATTRIBUTION_MAP[raw_attribution],

@@ -1,5 +1,5 @@
-from __future__ import annotations
 import re
+import json
 
 STATEMENT_STR = {0: "reporting", 1: "opinion"}
 PROPAGANDA_STR = {0: "neutral", 1: "propaganda"}
@@ -19,29 +19,50 @@ ATTRIBUTION_REASON = {
 }
 
 SYSTEM_PROMPT = (
-    "أنت مساعد ذكي متخصص في تصنيف النصوص الإخبارية العربية بدقة. "
-    "قم بتحليل العنوان والمحتوى الإخباري وصنفهم لثلاثة مهام:\n"
+    "أنت مساعد ذكي متخصص في تصنيف النصوص الإخبارية العربية بدقة عالية.\n"
+    "قم بتحليل النص الإخباري والميزات اللغوية المرفقة ثم صنف المدخلات لثلاثة مهام:\n"
     "1. نوع العبارة (statement_type): إما reporting أو opinion\n"
     "2. البروباغندا (propaganda): إما neutral أو propaganda\n"
     "3. الإسناد (attribution): إما supported_claim أو unsupported_claim\n\n"
-    "قد يتم تزويدك بميزات لغوية محسوبة آلياً مثل نسبة الكلمات والعبارات "
-    "المشحونة عاطفياً. استخدم هذه الميزات كإشارات مساعدة ضمن تحليل السياق، "
-    "ولا تعتبرها دليلاً حاسماً بمفردها على وجود البروباغندا.\n\n"
-    "يجب أن تبدأ إجابتك بخطوة تحليل قصيرة (تحليل النص:)، ثم تكتب التقييم النهائي "
-    "بالصيغة التالية بالضبط:\n"
+    "اعتمد على المؤشرات الإحصائية المرفقة لمساعدتك في اتخاذ القرار بشكل موضوعي.\n\n"
+    "يجب أن تبدأ إجابتك بخطوة تحليل موجزة (تحليل النص:)، ثم تكتب التقييم النهائي بالصيغة التالية تماماً:\n"
     "التقييم النهائي: [نوع العبارة] | [البروباغندا] | [الإسناد]"
 )
 
+def build_user_prompt(title: str, content: str, features_str: str) -> str:
+    try:
+        features = json.loads(features_str)
+    except Exception:
+        features = {
+            "quotes_count": 0,
+            "markers_count": 0,
+            "detected_patterns": [],
+            "bias_breakdown": {},
+            "entity_count": 0,
+            "unique_orgs_count": 0,
+            "subjective_markers_count": 0
+        }
 
-def build_user_prompt(title: str, content: str, loaded_words_ratio: float) -> str:
-    ratio_percent = loaded_words_ratio * 100
+    bias_lines = []
+    for cat, score in features.get("bias_breakdown", {}).items():
+        if score > 0:
+            bias_lines.append(f"  * {cat}: {score * 100:.2f}%")
+    bias_str = "\n".join(bias_lines) if bias_lines else "  * لا توجد مؤشرات انحياز واضحة."
+
+    patterns = ", ".join(features.get("detected_patterns", [])) if features.get("detected_patterns", []) else "لم يتم الكشف عن أنماط واضحة"
+
     return (
-        f"العنوان: {title}\n"
-        f"المحتوى: {content}\n\n"
-        f"ميزات لغوية محسوبة آلياً:\n"
-        f"- نسبة الكلمات والعبارات المشحونة عاطفياً: {ratio_percent:.4f}%"
+        f"<عنوان_الخبر>\n{title}\n</عنوان_الخبر>\n\n"
+        f"<محتوى_الخبر>\n{content}\n</محتوى_الخبر>\n\n"
+        f"<المؤشرات_اللغوية_المحسوبة>\n"
+        f"- علامات الاقتباس (المباشرة وغير المباشرة): {features.get('quotes_count', 0)}\n"
+        f"- الكلمات المفتاحية للإسناد ومصادر النقل: {features.get('markers_count', 0)}\n"
+        f"- أساليب التلاعب والبروباغندا المكتشفة: {patterns}\n"
+        f"- الكيانات المذكورة بالخبر (أشخاص/أماكن/منظمات): {features.get('entity_count', 0)} (عدد المنظمات الفريدة: {features.get('unique_orgs_count', 0)})\n"
+        f"- مؤشرات التعبير الذاتي والضمائر الشخصية: {features.get('subjective_markers_count', 0)}\n"
+        f"- توزيع نسب الشحن اللفظي والانحياز المكتشف:\n{bias_str}\n"
+        f"</المؤشرات_اللغوية_المحسوبة>"
     )
-
 
 def build_assistant_response(st_label: int, pr_label: int, at_label: int, include_reasoning: bool = True) -> str:
     final_line = (
@@ -57,26 +78,22 @@ def build_assistant_response(st_label: int, pr_label: int, at_label: int, includ
         f"{final_line}"
     )
 
-
 SYSTEM_PROMPT_NO_REASONING = (
     "أنت مساعد ذكي متخصص في تصنيف النصوص الإخبارية العربية بدقة. "
     "قم بتحليل العنوان والمحتوى الإخباري وصنفهم لثلاثة مهام:\n"
     "1. نوع العبارة (statement_type): إما reporting أو opinion\n"
     "2. البروباغندا (propaganda): إما neutral أو propaganda\n"
     "3. الإسناد (attribution): إما supported_claim أو unsupported_claim\n\n"
-    "قد يتم تزويدك بميزات لغوية محسوبة آلياً مثل نسبة الكلمات والعبارات "
-    "المشحونة عاطفياً. استخدم هذه الميزات كإشارات مساعدة ضمن تحليل السياق.\n\n"
     "أجب بالصيغة التالية بالضبط دون أي نص إضافي:\n"
     "التقييم النهائي: [نوع العبارة] | [البروباغندا] | [الإسناد]"
 )
 
-
-def build_messages(title, content, loaded_words_ratio, st_label=None, pr_label=None, at_label=None,
+def build_messages(title, content, features_str, st_label=None, pr_label=None, at_label=None,
                     include_answer=True, include_reasoning=True):
     system_content = SYSTEM_PROMPT if include_reasoning else SYSTEM_PROMPT_NO_REASONING
     messages = [
         {"role": "system", "content": system_content},
-        {"role": "user", "content": build_user_prompt(title, content, loaded_words_ratio)},
+        {"role": "user", "content": build_user_prompt(title, content, features_str)},
     ]
     if include_answer:
         messages.append({
@@ -84,7 +101,6 @@ def build_messages(title, content, loaded_words_ratio, st_label=None, pr_label=N
             "content": build_assistant_response(st_label, pr_label, at_label, include_reasoning=include_reasoning)
         })
     return messages
-
 
 _LABEL_SETS = {
     "statement_type": {"reporting": 0, "opinion": 1},
@@ -94,7 +110,6 @@ _LABEL_SETS = {
 
 _FINAL_MARKER_RE = re.compile(r"التقييم\s*النهائي\s*[:：]?")
 _SPLIT_RE = re.compile(r"[|/\-–—]")
-
 
 def parse_output(generation_text: str):
     if not generation_text:

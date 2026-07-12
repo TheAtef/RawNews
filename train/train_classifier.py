@@ -1,4 +1,3 @@
-from __future__ import annotations
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import sys
@@ -27,31 +26,27 @@ MAX_EVAL_INPUT_TOKENS = 512
 TRAIN_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl"))
 TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl"))
 
-
 def format_prompts(batch, tokenizer):
     formatted_texts = []
-    for title, content, loaded_ratio, st, pr, at in zip(
+    for title, content, features_json, st, pr, at in zip(
         batch["title"],
         batch["content"],
-        batch["loaded_words_ratio"],
+        batch["features_json"],
         batch["statement_type_label"],
         batch["propaganda_label"],
         batch["attribution_label"]
     ):
-        messages = build_messages(title, content, loaded_ratio, st, pr, at, include_answer=True)
+        messages = build_messages(title, content, features_json, st, pr, at, include_answer=True)
         text = tokenizer.apply_chat_template(messages, tokenize=False)
         formatted_texts.append(text)
 
     return {"text": formatted_texts}
 
-
 def run_classifier_training(task_name: str = "multitask"):
-    print(f"Loading Tokenizer: {MODEL_NAME}")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print("Loading Data...")
     train_df = load_file_to_df(TRAIN_PATH)
     test_df = load_file_to_df(TEST_PATH)
 
@@ -61,24 +56,10 @@ def run_classifier_training(task_name: str = "multitask"):
     neutral_ratios = [row["loaded_words_ratio"] for row in train_ds if row["propaganda_label"] == 0]
     propaganda_ratios = [row["loaded_words_ratio"] for row in train_ds if row["propaganda_label"] == 1]
 
-    print("=" * 50)
-    print("Neutral records:", len(neutral_ratios))
-    if neutral_ratios:
-        print("Neutral average loaded ratio:", sum(neutral_ratios) / len(neutral_ratios))
-    print("Propaganda records:", len(propaganda_ratios))
-    if propaganda_ratios:
-        print("Propaganda average loaded ratio:", sum(propaganda_ratios) / len(propaganda_ratios))
-    print("=" * 50)
-
     train_ds = train_ds.map(lambda batch: format_prompts(batch, tokenizer), batched=True)
     eval_ds = eval_ds.map(lambda batch: format_prompts(batch, tokenizer), batched=True)
 
     token_lengths = [len(tokenizer(t).input_ids) for t in train_ds["text"][:200]]
-    if token_lengths:
-        over_budget = sum(1 for l in token_lengths if l > MAX_SEQ_LENGTH)
-        print(f"Sampled sequence lengths - max: {max(token_lengths)}, "
-              f"mean: {sum(token_lengths)/len(token_lengths):.1f}, "
-              f"over budget ({MAX_SEQ_LENGTH}): {over_budget}/{len(token_lengths)}")
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -87,7 +68,6 @@ def run_classifier_training(task_name: str = "multitask"):
         bnb_4bit_compute_dtype=torch.bfloat16
     )
 
-    print(f"Loading Quantized Model: {MODEL_NAME}")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
@@ -142,7 +122,6 @@ def run_classifier_training(task_name: str = "multitask"):
         args=training_args,
     )
 
-    print("Starting training session on local GPU...")
     trainer.train()
 
     model = trainer.model
@@ -150,13 +129,11 @@ def run_classifier_training(task_name: str = "multitask"):
     save_path = f"./train/models/fine_tuned_llm_{task_name}"
     model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
-    print(f"Adapters successfully saved to: {save_path}")
 
     del trainer
     torch.cuda.empty_cache()
     gc.collect()
 
-    print("\nRunning post-training evaluation on test set...")
     model.eval()
 
     accuracy_metric = evaluate.load("accuracy")
@@ -175,7 +152,7 @@ def run_classifier_training(task_name: str = "multitask"):
             messages = build_messages(
                 example["title"],
                 example["content"],
-                example["loaded_words_ratio"],
+                example["features_json"],
                 include_answer=False
             )
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -232,7 +209,6 @@ def run_classifier_training(task_name: str = "multitask"):
     print("-" * 40)
     print(f"Average Multi-task Accuracy: {avg_accuracy:.4f}")
     print("=" * 40)
-
 
 if __name__ == "__main__":
     run_classifier_training(task_name="multitask")
