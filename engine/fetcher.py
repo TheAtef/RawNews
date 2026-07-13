@@ -1,22 +1,19 @@
 import asyncio
 from datetime import datetime
 import re
-from typing import Any
-
+from typing import Any, List, Optional
+import structlog
 from bs4 import BeautifulSoup
 import feedparser
-from typing import List, Optional
-import structlog
-
-from core.config import NewsSourceConfig
-from engine.scraper import RawArticle
-from core.config import settings
-logger = structlog.get_logger(__name__)
-
 import cloudscraper
 import json
 import requests
-from bs4 import BeautifulSoup
+
+from core.config import NewsSourceConfig, settings
+from engine.scraper import RawArticle
+
+logger = structlog.get_logger(__name__)
+
 
 class RSSFetcher:
     def __init__(self, timeout: int = 15) -> None:
@@ -25,17 +22,17 @@ class RSSFetcher:
 
     async def fetch_feed(self, url: str) -> Optional[feedparser.FeedParserDict]:
         try:
-            with self._cs.get(url, timeout=self._timeout) as response:
-                if response.status_code != 200:
-                    logger.warning("rss_fetch_error", url=url, status=response.status_code)
-                    return None
-                text = response.content
-                feed = feedparser.parse(text)
-                if feed.bozo and not feed.entries:
-                    logger.warning("rss_parse_error", url=url, error=str(feed.bozo_exception))
-                    return None
-                logger.info("rss_fetched", url=url, entries=len(feed.entries))
-                return feed
+            response = await asyncio.to_thread(self._cs.get, url, timeout=self._timeout)
+            if response.status_code != 200:
+                logger.warning("rss_fetch_error", url=url, status=response.status_code)
+                return None
+            text = response.content
+            feed = feedparser.parse(text)
+            if feed.bozo and not feed.entries:
+                logger.warning("rss_parse_error", url=url, error=str(feed.bozo_exception))
+                return None
+            logger.info("rss_fetched", url=url, entries=len(feed.entries))
+            return feed
         except Exception as e:
             logger.error("rss_exception", url=url, error=str(e))
             return None
@@ -66,14 +63,12 @@ class RSSFetcher:
                 continue
 
             title = getattr(entry, "title", "") or ""
-            # Content: prefer summary over description
             content = (
                 getattr(entry, "summary", "")
                 or getattr(entry, "description", "")
                 or ""
             )
 
-            # Strip HTML from content
             if content and "<" in content:
                 content = BeautifulSoup(content, "lxml").get_text(separator=" ")
 
@@ -100,7 +95,7 @@ class RSSFetcher:
 
 
 class GoogleNews:
-    def __init__(self, query, time_window="7d" ,limit=20, scrape_full_content=True):
+    def __init__(self, query: str, time_window: str = "7d", limit: int = 20, scrape_full_content: bool = True):
         self.cs = cloudscraper.create_scraper()
         self.query = query
         self.time_window = time_window
@@ -109,27 +104,26 @@ class GoogleNews:
         self.link = f'https://news.google.com/rss/search?q={query}when%3A{time_window}&hl=ar&gl=SA&ceid=SA%3Aar'
     
     async def fetch_news(self) -> List[feedparser.FeedParserDict]:
-        with self.cs.get(self.link, timeout=15) as cs:
-            if cs.status_code == 200:
-                rss = feedparser.parse(cs.content)
-                logger.info("google_news_fetch_success", query=self.query, total_entries=len(rss.entries))
-                articles = []
-                for entry in rss.entries:
-                    try:
-                        url = await self.getGoogleRedirectUrl(entry.link)
-                        if any(blocked in url for blocked in settings.blocked_websites):
-                            continue
-                        entry.link = url
-                        articles.append(entry)
-                    except Exception:
+        response = await asyncio.to_thread(self.cs.get, self.link, timeout=15)
+        articles = []
+        if response.status_code == 200:
+            rss = feedparser.parse(response.content)
+            logger.info("google_news_fetch_success", query=self.query, total_entries=len(rss.entries))
+            for entry in rss.entries:
+                try:
+                    url = await self.getGoogleRedirectUrl(entry.link)
+                    if any(blocked in url for blocked in settings.blocked_websites):
                         continue
-                    if len(articles) >= self.limit:
-                        break
-            return articles
+                    entry.link = url
+                    articles.append(entry)
+                except Exception:
+                    continue
+                if len(articles) >= self.limit:
+                    break
+        return articles
 
-            
     async def getGoogleRedirectUrl(self, rss_url: str) -> str:
-        resp = requests.get(rss_url)
+        resp = await asyncio.to_thread(requests.get, rss_url, timeout=10)
         data = BeautifulSoup(resp.text, 'html.parser').select_one('c-wiz[data-p]').get('data-p')
         obj = json.loads(data.replace('%.@.', '["garturlreq",'))
 
@@ -138,12 +132,13 @@ class GoogleNews:
         }
 
         headers = {
-        'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+            'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
         }
 
         url = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
-        response = requests.post(url, headers=headers, data=payload)
+        response = await asyncio.to_thread(requests.post, url, headers=headers, data=payload, timeout=10)
+        
         array_string = json.loads(response.text.replace(")]}'", ""))[0][2]
         article_url = json.loads(array_string)[1]
 
@@ -152,8 +147,6 @@ class GoogleNews:
 
 
 class ArticleScraper:
-
-
     CONTENT_SELECTORS = [
         "article.article-body",
         "div.article-content",
@@ -172,21 +165,19 @@ class ArticleScraper:
 
     async def scrape(self, url: str) -> Optional[str]:
         try:
-            with self._cs.get(
-                url,
-                timeout=self._timeout,
-                allow_redirects=True,
-            ) as response:
-                if response.status_code != 200:
-                    logger.warning("scrape_failed", url=url, status_code=response.status_code)
-                    return None
-                html = response.content
-                return self._extract_text(html)
+            response = await asyncio.to_thread(
+                self._cs.get, url, timeout=self._timeout, allow_redirects=True
+            )
+            if response.status_code != 200:
+                logger.warning("scrape_failed", url=url, status_code=response.status_code)
+                return None
+            html = response.content
+            return self._extract_text(html)
         except Exception as e:
             logger.warning("scrape_failed", url=url, error=str(e))
             return None
 
-    def _extract_text(self, html: str) -> Optional[str]:
+    def _extract_text(self, html: bytes) -> Optional[str]:
         soup = BeautifulSoup(html, "lxml")
 
         for tag in soup.find_all(

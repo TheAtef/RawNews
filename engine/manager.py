@@ -3,11 +3,9 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set
-import newspaper
-import cloudscraper
 import numpy as np
 import structlog
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import NewsSourceConfig, settings
 from core.sources_list import ARABIC_NEWS_SOURCES
@@ -55,12 +53,13 @@ def _share_entities(set_a: Set[str], set_b: Set[str]) -> bool:
                     return True
     return False
 
+
 def is_boilerplate(text: str) -> bool:
     if not text:
         return True
-    if len(text) < 400:
+    if len(text) < 250:
         match_count = sum(1 for kw in ARABIC_BOILERPLATE_KEYWORDS if kw in text)
-        if match_count >= 2:
+        if match_count >= 3:
             return True
     return False
 
@@ -79,15 +78,15 @@ def has_geographical_conflict(locs_a: List[str], locs_b: List[str], title_a: str
                 continue
             has_b = any(term in set_b for term in other_terms)
             if has_b:
-
                 has_a_other = any(term in set_a for term in other_terms)
                 has_b_this = any(term in set_b for term in terms)
                 if not has_a_other and not has_b_this:
                     return True
                     
     return False
-def has_title_vocabulary_conflict(title_a: str, title_b: str) -> bool:
 
+
+def has_title_vocabulary_conflict(title_a: str, title_b: str) -> bool:
     words_a = {w.strip('"«»“”\'').strip(':') for w in title_a.lower().split() if len(w) > 2}
     words_b = {w.strip('"«»“”\'').strip(':') for w in title_b.lower().split() if len(w) > 2}
     
@@ -105,6 +104,18 @@ def has_title_vocabulary_conflict(title_a: str, title_b: str) -> bool:
             return True 
             
     return False
+
+
+def _extract_newspaper_content(url: str) -> str:
+    try:
+        from newspaper import Article
+        article = Article(url, language='ar')
+        article.download()
+        article.parse()
+        return article.text or ""
+    except Exception:
+        return ""
+
 
 class SourceManager:
     def __init__(self) -> None:
@@ -372,18 +383,34 @@ class SourceManager:
 
             tokens = self._tokenizer.tokenize(normalized_content)
             filtered_tokens = self._stop_filter.filter(tokens)
-            classifications = self._classifier.classify(normalized_content, raw.title, filtered_tokens)
+
+            from preprocessing.propaganda_features import calculate_loaded_words_ratio
+            loaded_words_ratio = calculate_loaded_words_ratio(filtered_tokens)
+
+            predicted_propaganda = self._classifier.classify_propaganda(
+                normalized_content, 
+                raw.title, 
+                loaded_words_ratio=loaded_words_ratio
+            )
 
             scores = self._scorer.evaluate_article(
                 source_name=raw.source_name,
                 raw_text=content_to_use,
-                tokens=filtered_tokens
+                tokens=filtered_tokens,
+                title=raw.title
+            )
+
+            computed_attribution = self._scorer.determine_attribution_label(scores["attribution_score"])
+            computed_statement = self._scorer.determine_statement_type(
+                title=raw.title, 
+                raw_text=content_to_use, 
+                neutrality_score=scores["neutrality_score"]
             )
 
             is_verified = (
                 scores["reliability_score"] >= 0.70 and 
-                classifications["attribution_label"] == "supported_claim" and 
-                classifications["propaganda_label"] != "propaganda"
+                computed_attribution == "supported_claim" and 
+                predicted_propaganda != "propaganda"
             )
 
             article_orm = ArticleORM(
@@ -405,9 +432,9 @@ class SourceManager:
                 neutrality_score=scores["neutrality_score"],
                 attribution_score=scores["attribution_score"],
                 
-                propaganda_label=classifications["propaganda_label"],
-                statement_type=classifications["statement_type"],
-                attribution_label=classifications["attribution_label"],
+                propaganda_label=predicted_propaganda,
+                statement_type=computed_statement,
+                attribution_label=computed_attribution,
                 verified=is_verified,
 
                 published_at=raw.published_at,
@@ -457,14 +484,9 @@ class SourceManager:
         articles: List[RawArticle] = []
         for entry in entries:
             try:
-                text = ""
-                data = await asyncio.to_thread(newspaper.article, entry.link)
+                text = await asyncio.to_thread(_extract_newspaper_content, entry.link)
                 
-                if hasattr(data, 'text_cleaned') and data.text_cleaned != "":
-                    text = data.text_cleaned
-                elif hasattr(data, 'text') and data.text != "":
-                    text = data.text
-                else: 
+                if not text: 
                     text = await scraper.scrape(entry.link)
                     
                 article = RawArticle(

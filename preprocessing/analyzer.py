@@ -6,11 +6,10 @@ import structlog
 from typing import List, Dict, Set, Optional
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
 from core.config import settings
-from preprocessing.propaganda_features import (LOADED_PHRASES,calculate_loaded_words_ratio,)
+from preprocessing.propaganda_features import (LOADED_PHRASES, calculate_loaded_words_ratio)
 # from core.constants import BIAS_INDICATORS
 from core.sources_list import ARABIC_NEWS_SOURCES
-from train.prepare_data import ATTRIBUTION_MAP, PROPAGANDA_MAP, STATEMENT_MAP
-
+from core.constants import ATTRIBUTION_MARKERS, OPINION_MARKERS
 
 logger = structlog.get_logger(__name__)
 
@@ -22,73 +21,57 @@ SOURCE_AUTHORITY: Dict[str, float] = {
 # for category_dict in BIAS_INDICATORS.values():
 #     LOADED_WORDS.update(category_dict.keys())
 
-ATTRIBUTION_MARKERS: List[str] = [
-    "وفقاً لـ", "حسب بيان", "أعلنت وزارة", "صرح", "أكد", "نقلت عن", "قالت", "ذكر", "أوضح", "أشار"
-]
 
-
-reverse_statement_map = {v: k for k, v in STATEMENT_MAP.items()}
-reverse_propaganda_map = {v: k for k, v in PROPAGANDA_MAP.items()}
-reverse_attribution_map = {v: k for k, v in ATTRIBUTION_MAP.items()}
 # preprocessing/analyzer.py
-
-from train.prepare_data import REVERSE_MAPS, NUM_CLASSES
+from train.prompt_utils import build_messages, parse_output
+from transformers import AutoModelForCausalLM # Import CausalLM instead of SequenceClassification
 
 class AraBERTClassifier:
     def __init__(self) -> None:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         try:
-            self.model = AutoModelForSequenceClassification.from_pretrained(settings.multi_sentiment_model_id)
-            self.model.to(self.device)
             self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                settings.multi_sentiment_model_id,
+                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto"
+            )
             self.enabled = True
         except Exception as e:
-            logger.error("arabert_classifier_init_failed", error=str(e))
+            logger.error("qwen_classifier_init_failed", error=str(e))
             self.enabled = False
-
-    def classify(self, text: str, title: str, clean_tokens: List[str]) -> Dict[str, str]:
+    def classify_propaganda(self, text: str, title: str, loaded_words_ratio: float) -> str:
         if not self.enabled or not text.strip():
-            return {
-                "propaganda_label": "neutral",
-                "statement_type": "reporting",
-                "attribution_label": "unsupported_claim"
-            }
-
-        truncated_text = title + "[SEP]" + text
+            return "neutral"
 
         try:
-            inputs = self.tokenizer(truncated_text, truncation=True, return_tensors="pt").to(self.device)
-            outputs = self.model(**inputs)
-            logits = outputs.logits.squeeze(0)
+            messages = build_messages(
+                title=title,
+                content=text,
+                loaded_words_ratio=loaded_words_ratio,
+                include_answer=False
+            )
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
 
-            st_len = NUM_CLASSES["statement_type"]
-            pr_len = NUM_CLASSES["propaganda"]
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=80,
+                    temperature=0.3,  
+                    do_sample=True,   
+                    top_p=0.85,       
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
 
-            statement_logits = logits[:st_len]
-            propaganda_logits = logits[st_len : st_len + pr_len]
-            attribution_logits = logits[st_len + pr_len :]
+            generated_tokens = outputs[0][inputs.input_ids.shape[-1]:]
+            decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-            statement_probs = torch.softmax(statement_logits, dim=-1)
-            propaganda_probs = torch.softmax(propaganda_logits, dim=-1)
-            attribution_probs = torch.softmax(attribution_logits, dim=-1)
-
-            statement_idx = int(torch.argmax(statement_probs).item())
-            propaganda_idx = int(torch.argmax(propaganda_probs).item())
-            attribution_idx = int(torch.argmax(attribution_probs).item())
-
-            return {
-                "propaganda_label": REVERSE_MAPS["propaganda"][propaganda_idx],
-                "statement_type":  REVERSE_MAPS["statement_type"][statement_idx],
-                "attribution_label": REVERSE_MAPS["attribution"][attribution_idx]
-            }
+            return parse_output(decoded_output)
 
         except Exception as e:
-            logger.error("arabert_classification_error", error=str(e))
-            return {
-                "propaganda_label": "neutral",
-                "statement_type": "reporting",
-                "attribution_label": "unsupported_claim"
-            }
+            logger.error("qwen_inference_error", error=str(e))
+            return "neutral"
 class HeuristicScorer:
     def __init__(self, source_registry: Dict[str, float] = None):
         self.source_registry = source_registry if source_registry is not None else SOURCE_AUTHORITY
@@ -98,38 +81,56 @@ class HeuristicScorer:
 
     def calculate_neutrality_score(self, tokens: List[str]) -> float:
         density = calculate_loaded_words_ratio(tokens)
-
         score = max(0.0, 1.0 - (density * 15.0))
-
         return round(score, 2)
-    def calculate_attribution_score(self, text: str) -> float:
+
+    def calculate_attribution_score(self, text: str, title: str = "") -> float:
         score = 0.0
-        quotes = re.findall(r'["«»“”]', text)
+        combined_text = (title + " " + text)
+        
+        quotes = re.findall(r'["«»“”]', combined_text)
         if len(quotes) >= 2:
             score += 0.40            
-        marker_matches = sum(1 for marker in ATTRIBUTION_MARKERS if marker in text)
-        score += min(0.60, marker_matches * 0.20)
+        
+        if title and re.search(r'\w+\s*:\s*\w+', title):
+            score += 0.35
+
+        marker_matches = sum(1 for marker in ATTRIBUTION_MARKERS if marker in combined_text)
+        score += min(0.60, marker_matches * 0.15)
         return round(score, 2)
+
+    def determine_attribution_label(self, attribution_score: float) -> str:
+        return "supported_claim" if attribution_score >= 0.30 else "unsupported_claim"
+
+    def determine_statement_type(self, title: str, raw_text: str, neutrality_score: float) -> str:
+        combined = (title + " " + raw_text).lower()
+        
+        if any(marker in combined for marker in OPINION_MARKERS):
+            return "opinion"
+        
+        if neutrality_score < 0.50:
+            return "opinion"
+            
+        return "reporting"
 
     def evaluate_article(
         self, 
         source_name: str, 
         raw_text: str, 
         tokens: List[str], 
+        title: str = "",
         consensus_score: float = 1.0
     ) -> Dict[str, float]:
         s_auth = self.calculate_source_authority(source_name)
         s_neut = self.calculate_neutrality_score(tokens)
-        s_attr = self.calculate_attribution_score(raw_text)
+        s_attr = self.calculate_attribution_score(raw_text, title=title) # Pass title down
 
         composite = (0.35 * s_auth) + (0.35 * s_neut) + (0.15 * s_attr) + (0.15 * consensus_score)
         return {
             "reliability_score": round(composite, 2),
             "neutrality_score": s_neut,
             "attribution_score": s_attr
-        }    
-
-
+        }
 class StoryGrouper:
     def __init__(self) -> None:
         self.device = "cuda" if settings.device == "cuda" and torch.cuda.is_available() else "cpu"

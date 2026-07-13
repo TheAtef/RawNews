@@ -1,4 +1,4 @@
-
+# train/prepare_data.py
 from __future__ import annotations
 import os
 import logging
@@ -36,15 +36,11 @@ ATTRIBUTION_MAP = {
 }
 
 NUM_CLASSES = {
-    "statement_type": len(set(STATEMENT_MAP.values())),
-    "propaganda": len(set(PROPAGANDA_MAP.values())),
-    "attribution": len(set(ATTRIBUTION_MAP.values()))
+    "propaganda": len(set(PROPAGANDA_MAP.values()))
 }
 
 REVERSE_MAPS = {
-    "propaganda": {0: "neutral", 1: "propaganda"},
-    "statement_type": {0: "reporting", 1: "opinion"},
-    "attribution": {0: "supported_claim", 1: "unsupported_claim"}
+    "propaganda": {0: "neutral", 1: "propaganda"}
 }
 
 GLOBAL_CLEANER = ArabicNewsCleaner()
@@ -54,10 +50,8 @@ GLOBAL_STOP_FILTER = ArabicStopwordFilter()
 
 
 def bootstrap_armpro_single_file(file_path: str):
-
     logger.info("Initializing automatic download and mapping of QCRI/ArmPro (binary config)...")
     
-    # Ensure local directory structure exists
     dir_name = os.path.dirname(file_path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
@@ -94,7 +88,6 @@ def bootstrap_armpro_single_file(file_path: str):
             continue
             
         raw_label = row.get(label_col) if label_col else None
-        
         val_str = str(raw_label).lower().strip()
         
         if "non-propagandistic" in val_str or val_str in ["false", "0", "neutral", "no", "non_propaganda"]:
@@ -104,12 +97,9 @@ def bootstrap_armpro_single_file(file_path: str):
         else:
             mapped_propaganda = "neutral"
 
-        if mapped_propaganda == "propaganda":
-            mapped_statement = "opinion"
-            mapped_attribution = "unsupported_claim"
-        else:
-            mapped_statement = "reporting"
-            mapped_attribution = "supported_claim"
+        # Structural placeholders for pipeline database schemas
+        mapped_statement = "opinion" if mapped_propaganda == "propaganda" else "reporting"
+        mapped_attribution = "unsupported_claim" if mapped_propaganda == "propaganda" else "supported_claim"
 
         records.append({
             "text": raw_text,
@@ -126,11 +116,11 @@ def bootstrap_armpro_single_file(file_path: str):
 
 def load_file_to_df(file_path: str) -> pd.DataFrame:
     if not os.path.exists(file_path):
-        logger.info(f"Target dataset file was not found at: {file_path}. Initiating automatic fallback/bootstrap from QCRI/ArmPro...")
+        logger.info(f"Target dataset file was not found at: {file_path}. Initiating fallback bootstrap...")
         try:
             bootstrap_armpro_single_file(file_path)
         except Exception as e:
-            logger.error(f"Failed to automatically bootstrap from QCRI/ArmPro: {e}")
+            logger.error(f"Failed to bootstrap from QCRI/ArmPro: {e}")
             raise FileNotFoundError(f"Target dataset file was not found at: {file_path}")
 
     if file_path.endswith(".jsonl"):
@@ -205,22 +195,8 @@ def prepare_single_dataset(
                 logger.warning(f"Row {idx}: Invalid propaganda label '{raw_label}'. Row skipped.")
                 continue
             label = PROPAGANDA_MAP[raw_label]
-
-        elif target_task == "statement_type":
-            raw_label = row.get("statement_type")
-            if raw_label not in STATEMENT_MAP:
-                logger.warning(f"Row {idx}: Invalid statement label '{raw_label}'. Row skipped.")
-                continue
-            label = STATEMENT_MAP[raw_label]
-
-        elif target_task == "attribution":
-            raw_label = row.get("attribution_label")
-            if raw_label not in ATTRIBUTION_MAP:
-                logger.warning(f"Row {idx}: Invalid attribution label '{raw_label}'. Row skipped.")
-                continue
-            label = ATTRIBUTION_MAP[raw_label]
         else:
-            raise ValueError(f"Unknown target task: {target_task}")
+            raise ValueError(f"Unknown or unsupported target task: {target_task}")
 
         processed_records.append({
             "text": cleaned_text,
@@ -234,6 +210,10 @@ def prepare_multitask_dataset(
     df: pd.DataFrame,
     preprocessor: ArabertPreprocessor = None
 ) -> Dataset:
+    """
+    Prepared dataset for binary SFT fine-tuning.
+    Generates text inputs and single-task propaganda labels.
+    """
     processed_records = []
 
     for idx, row in df.iterrows():
@@ -248,21 +228,13 @@ def prepare_multitask_dataset(
         feature_tokens = GLOBAL_TOKENIZER.tokenize(normalized_feature_text)
         loaded_words_ratio = calculate_loaded_words_ratio(feature_tokens)
 
-        raw_statement = row.get("statement_type")
         raw_propaganda = row.get("propaganda_label")
-        raw_attribution = row.get("attribution_label")
 
-        if (raw_statement not in STATEMENT_MAP or
-            raw_propaganda not in PROPAGANDA_MAP or
-            raw_attribution not in ATTRIBUTION_MAP):
+        if raw_propaganda not in PROPAGANDA_MAP:
             continue
 
         text = f"العنوان: {title}\nالمحتوى: {content}"
-        label = [
-            float(PROPAGANDA_MAP[raw_propaganda]),
-            float(STATEMENT_MAP[raw_statement]),
-            float(ATTRIBUTION_MAP[raw_attribution])
-        ]
+        label = [float(PROPAGANDA_MAP[raw_propaganda])]
 
         processed_records.append({
             "text": text,
@@ -270,9 +242,7 @@ def prepare_multitask_dataset(
             "title": title,
             "content": content,
             "loaded_words_ratio": loaded_words_ratio,
-            "statement_type_label": STATEMENT_MAP[raw_statement],
-            "propaganda_label": PROPAGANDA_MAP[raw_propaganda],
-            "attribution_label": ATTRIBUTION_MAP[raw_attribution],
+            "propaganda_label": PROPAGANDA_MAP[raw_propaganda]
         })
 
     return Dataset.from_list(processed_records)
