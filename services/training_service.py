@@ -1,10 +1,13 @@
+
 from sqlalchemy import select, func
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from datetime import datetime,UTC
 from db.session import AsyncSessionLocal,init_db
-from models.orm import  ArticleFeedbackORM, TrainingJobORM,FeedbackStatus
+from models.orm import  ArticleFeedbackORM, ArticleORM, TrainingJobORM,FeedbackStatus
+from train.export_feedback import export_feedback_dataset
+from train.merge_dataset import merge
 TRAINING_FEEDBACK_THREESHOLD=500
 async def count_unused_approved_feedbacks()->int:
     async with AsyncSessionLocal() as session:
@@ -67,7 +70,9 @@ async def run_training_pipeline(job_id: int):
 
         print("=" * 50)
         print("Export feedback dataset...")
+        await export_feedback_dataset()
         print("Merge dataset...")
+        merge()
         print("Train model...")
         print("Evaluate model...")
         print("=" * 50)
@@ -85,10 +90,19 @@ async def run_training_pipeline(job_id: int):
 
 async def create_test_feedbacks(count: int = 500):
     async with AsyncSessionLocal() as session:
+        articles = (
+            await session.execute(
+                select(ArticleORM).limit(500)
+            )
+        ).scalars().all()
+
         feedbacks = []
 
-        for _ in range(count):
+        for article in articles:
+
             feedback = ArticleFeedbackORM(
+                article_id=article.id,
+
                 propaganda_prediction="neutral",
                 statement_prediction="reporting",
                 attribution_prediction="supported_claim",
@@ -105,7 +119,6 @@ async def create_test_feedbacks(count: int = 500):
         session.add_all(feedbacks)
 
         await session.commit()
-
     
 
 if __name__ == "__main__":
