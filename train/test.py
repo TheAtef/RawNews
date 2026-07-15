@@ -3,7 +3,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
 MODEL_NAME = "Qwen/Qwen3.5-0.8B"
-ADAPTER_PATH = "./train/models/fine_tuned_llm_multitask"
+ADAPTER_PATH = "./train/models/fine_tuned_llm_propaganda_binary"
 
 def load_inference_model():
     tokenizer = AutoTokenizer.from_pretrained(ADAPTER_PATH)

@@ -32,22 +32,20 @@ DEFAULT_TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_
 
 def format_prompts(batch, tokenizer):
     formatted_texts = []
-    for title, content, loaded_ratio, st, pr, at in zip(
+    for title, content, loaded_ratio, pr in zip(
         batch["title"],
         batch["content"],
         batch["loaded_words_ratio"],
-        batch["statement_type_label"],
-        batch["propaganda_label"],
-        batch["attribution_label"]
+        batch["propaganda_label"]
     ):
-        messages = build_messages(title, content, loaded_ratio, st, pr, at, include_answer=True)
+        messages = build_messages(title, content, loaded_ratio, pr_label=pr, include_answer=True)
         text = tokenizer.apply_chat_template(messages, tokenize=False)
         formatted_texts.append(text)
 
     return {"text": formatted_texts}
 
 
-def run_classifier_training(task_name: str = "multitask", train_path=None, test_path=None):
+def run_classifier_training(task_name: str = "propaganda_binary", train_path=None, test_path=None):
     if train_path is None:
         train_path = DEFAULT_TRAIN_PATH
 
@@ -174,12 +172,10 @@ def run_classifier_training(task_name: str = "multitask", train_path=None, test_
     accuracy_metric = evaluate.load("accuracy")
     f1_metric = evaluate.load("f1")
 
-    st_mapping = {"reporting": 0, "opinion": 1}
     pr_mapping = {"neutral": 0, "propaganda": 1}
-    at_mapping = {"supported_claim": 0, "unsupported_claim": 1}
 
-    true_st, true_pr, true_at = [], [], []
-    pred_st, pred_pr, pred_at = [], [], []
+    true_pr = []
+    pred_pr = []
     unparsed_count = 0
 
     with torch.no_grad():
@@ -200,7 +196,7 @@ def run_classifier_training(task_name: str = "multitask", train_path=None, test_
 
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=150,
+                max_new_tokens=100,
                 temperature=0.1,
                 do_sample=False,
                 eos_token_id=tokenizer.eos_token_id
@@ -209,40 +205,25 @@ def run_classifier_training(task_name: str = "multitask", train_path=None, test_
             generated_tokens = outputs[0][inputs.input_ids.shape[-1]:]
             decoded_output = tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-            st_pred, pr_pred, at_pred = parse_output(decoded_output)
-            if "unknown" in (st_pred, pr_pred, at_pred):
+            pr_pred = parse_output(decoded_output)
+            if pr_pred == "unknown":
                 unparsed_count += 1
 
-            true_st_val = example["statement_type_label"]
             true_pr_val = example["propaganda_label"]
-            true_at_val = example["attribution_label"]
-
-            true_st.append(true_st_val)
             true_pr.append(true_pr_val)
-            true_at.append(true_at_val)
 
-            pred_st.append(st_mapping.get(st_pred, 1 - true_st_val))
             pred_pr.append(pr_mapping.get(pr_pred, 1 - true_pr_val))
-            pred_at.append(at_mapping.get(at_pred, 1 - true_at_val))
 
-    st_acc = accuracy_metric.compute(predictions=pred_st, references=true_st)["accuracy"]
     pr_acc = accuracy_metric.compute(predictions=pred_pr, references=true_pr)["accuracy"]
-    at_acc = accuracy_metric.compute(predictions=pred_at, references=true_at)["accuracy"]
-
     pr_f1 = f1_metric.compute(predictions=pred_pr, references=true_pr, average="macro")["f1"]
-    avg_accuracy = (st_acc + pr_acc + at_acc) / 3.0
     parse_failure_rate = unparsed_count / max(len(eval_ds), 1)
 
     print("\n" + "=" * 40)
     print("FINAL LLM TEST SET EVALUATION REPORT")
     print("=" * 40)
-    print(f"Statement Type Accuracy: {st_acc:.4f}")
     print(f"Propaganda Accuracy:     {pr_acc:.4f}")
     print(f"Propaganda F1-Macro:     {pr_f1:.4f}")
-    print(f"Attribution Accuracy:    {at_acc:.4f}")
     print(f"Parse Failure Rate:      {parse_failure_rate:.4f}")
-    print("-" * 40)
-    print(f"Average Multi-task Accuracy: {avg_accuracy:.4f}")
     print("=" * 40)
     return {
         "accuracy": avg_accuracy,
@@ -253,4 +234,4 @@ def run_classifier_training(task_name: str = "multitask", train_path=None, test_
     }
 
 if __name__ == "__main__":
-    run_classifier_training(task_name="multitask")
+    run_classifier_training(task_name="propaganda_binary")
