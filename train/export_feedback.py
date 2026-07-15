@@ -12,16 +12,6 @@ from models.orm import ArticleORM,ArticleFeedbackORM,FeedbackStatus
 async def export_feedback_dataset():
     print("Exporter started")
     async with AsyncSessionLocal()as session:
-        # result = await session.execute(
-        #     select(ArticleORM)
-        # )
-
-        # articles = result.scalars().all()
-
-        # print("ARTICLES COUNT =", len(articles))
-
-        # for article in articles:
-        #     print(article.id)
         stmt=(select(ArticleORM,ArticleFeedbackORM)
               .join(
             ArticleFeedbackORM,ArticleORM.id==ArticleFeedbackORM.article_id)
@@ -62,16 +52,14 @@ async def export_feedback_dataset():
             }
             exported_rows.append(record)
 
-            output_path="train/approved_feedback_dataset.jsonl"
-            with open(output_path,"w",encoding="utf-8") as f:
+        output_path="train/approved_feedback_dataset.jsonl"
+        with open(output_path,"w",encoding="utf-8") as f:
 
-                for row in exported_rows:
-                    f.write(json.dumps(row,ensure_ascii=False) + "\n")
+            for row in exported_rows:
+                f.write(json.dumps(row,ensure_ascii=False) + "\n")
 
-            print(
-                f"Exported {len(exported_rows)} records "
-                f"to {output_path}"
-            )
+        print(
+            f"Exported {len(exported_rows)} records "f"to {output_path}")
             
 if __name__ == "__main__":
     asyncio.run(export_feedback_dataset())

@@ -44,6 +44,7 @@ from engine.manager import SourceManager
 from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus
 from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema
 from utils.logging import configure_logging
+from services.training_service import check_and_create_training_job
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
 
@@ -378,9 +379,15 @@ async def article_feedback_status(
     await db.commit()
     await db.refresh(feedback)
 
+    training_job = None
+
+    if feedback.status == FeedbackStatus.APPROVED:
+        training_job = await check_and_create_training_job()
+
     return {
         "message": "Feedback updated successfully",
-        "status": feedback.status
+        "status": feedback.status,
+        "training_job_id": training_job.id if training_job else None
     }
 
 

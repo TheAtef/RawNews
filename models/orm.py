@@ -75,11 +75,11 @@ class ArticleFeedbackORM(Base):
     notes=Column(String,nullable=True)
 
     article = relationship("ArticleORM",back_populates="feedbacks")
+    training_job_id = Column(Integer,ForeignKey("training_job.id"),nullable=True)
+    training_job = relationship("TrainingJobORM",back_populates="feedbacks")
 
     status = Column(
-        Enum(FeedbackStatus),
-        default=FeedbackStatus.PENDING,
-        nullable=False
+        Enum(FeedbackStatus,values_callable=lambda enum: [e.value for e in enum]),default=FeedbackStatus.PENDING,nullable=False
     )
     admin_notes = Column(Text, nullable=True)
 
@@ -108,9 +108,11 @@ class TrainingJobORM(Base):
     __tablename__="training_job"
     id=Column(Integer,primary_key=True)
     feedback_count=Column(Integer,nullable=False)
-    accuracy=Column(Integer,nullable=False)
+    accuracy=Column(Float,nullable=True)
     status=Column(Enum("PENDING","RUNNING","COMPLETED","FAILED",name="training_job_status"),default="PENDING",nullable=False)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime,default=datetime.utcnow,nullable=False)
+    error_message = Column(Text, nullable=True)
+    feedbacks = relationship("ArticleFeedbackORM",back_populates="training_job")
 
