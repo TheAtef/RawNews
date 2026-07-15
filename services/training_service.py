@@ -8,6 +8,7 @@ from db.session import AsyncSessionLocal,init_db
 from models.orm import  ArticleFeedbackORM, ArticleORM, TrainingJobORM,FeedbackStatus
 from train.export_feedback import export_feedback_dataset
 from train.merge_dataset import merge
+from train.train_classifier import run_classifier_training
 TRAINING_FEEDBACK_THREESHOLD=500
 async def count_unused_approved_feedbacks()->int:
     async with AsyncSessionLocal() as session:
@@ -54,36 +55,36 @@ async def check_and_create_training_job()->TrainingJobORM | None:
     return training_job
 async def run_training_pipeline(job_id: int):
     async with AsyncSessionLocal() as session:
-
-        training_job = await session.get(
-            TrainingJobORM,
-            job_id
-        )
-
+        training_job = await session.get(TrainingJobORM,job_id)
         if training_job is None:
             raise ValueError("Training job not found")
-
         training_job.status = "RUNNING"
         training_job.started_at = datetime.now(UTC)
-
         await session.commit()
-
-        print("=" * 50)
-        print("Export feedback dataset...")
-        await export_feedback_dataset()
-        print("Merge dataset...")
-        merge()
-        print("Train model...")
-        print("Evaluate model...")
-        print("=" * 50)
-
-        training_job.status = "COMPLETED"
-        training_job.finished_at = datetime.now(UTC)
-        training_job.accuracy = 0.91
-
-        await session.commit()
-
-        await session.refresh(training_job)
+        try:
+            print("=" * 50)
+            print("Export feedback dataset...")
+            await export_feedback_dataset()
+            print("Merge dataset...")
+            merge()
+            print("Train model...")
+            metrics = run_classifier_training(task_name="multitask",train_path="train/merged_dataset.jsonl")
+            training_job.accuracy = metrics["accuracy"]
+            training_job.statement_accuracy = metrics["statement_accuracy"]
+            training_job.propaganda_accuracy = metrics["propaganda_accuracy"]
+            training_job.propaganda_f1 = metrics["propaganda_f1"]
+            training_job.parse_failure_rate = metrics["parse_failure_rate"]
+            training_job.model_path = metrics["model_path"]      
+            training_job.status = "COMPLETED"
+            print("Evaluate model...")
+            print("=" * 50)
+        except Exception as e:
+            training_job.status = "FAILED"
+            training_job.error_message = str(e)
+        finally:
+            training_job.finished_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(training_job)
 
         return training_job
 

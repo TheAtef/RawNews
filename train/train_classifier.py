@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+from pyexpat import model
 import sys
 import gc
 import torch
@@ -11,6 +12,7 @@ from transformers import (
     AutoModelForCausalLM,
     BitsAndBytesConfig,
 )
+from datetime import datetime
 from peft import LoraConfig, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
@@ -24,8 +26,8 @@ MODEL_NAME = "Qwen/Qwen3.5-0.8B"
 MAX_SEQ_LENGTH = 512
 MAX_EVAL_INPUT_TOKENS = 512
 
-TRAIN_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl"))
-TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl"))
+DEFAULT_TRAIN_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_train.jsonl"))
+DEFAULT_TEST_PATH = os.path.abspath(os.path.join(script_dir, "..", "train/clean_data", "relabeled_test.jsonl"))
 
 
 def format_prompts(batch, tokenizer):
@@ -45,15 +47,24 @@ def format_prompts(batch, tokenizer):
     return {"text": formatted_texts}
 
 
-def run_classifier_training(task_name: str = "multitask"):
+def run_classifier_training(task_name: str = "multitask", train_path=None, test_path=None):
+    if train_path is None:
+        train_path = DEFAULT_TRAIN_PATH
+
+    if test_path is None:
+        test_path = DEFAULT_TEST_PATH
     print(f"Loading Tokenizer: {MODEL_NAME}")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     print("Loading Data...")
-    train_df = load_file_to_df(TRAIN_PATH)
-    test_df = load_file_to_df(TEST_PATH)
+
+    print("Training dataset:", train_path)
+    print("Testing dataset :", test_path)
+
+    train_df = load_file_to_df(train_path)
+    test_df = load_file_to_df(test_path)
 
     train_ds = prepare_multitask_dataset(train_df)
     eval_ds = prepare_multitask_dataset(test_df)
@@ -146,8 +157,9 @@ def run_classifier_training(task_name: str = "multitask"):
     trainer.train()
 
     model = trainer.model
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    save_path = f"./train/models/fine_tuned_llm_{task_name}"
+    save_path = os.path.join("train","models",f"{task_name}_{timestamp}")   
     model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
     print(f"Adapters successfully saved to: {save_path}")
@@ -232,7 +244,13 @@ def run_classifier_training(task_name: str = "multitask"):
     print("-" * 40)
     print(f"Average Multi-task Accuracy: {avg_accuracy:.4f}")
     print("=" * 40)
-
+    return {
+        "accuracy": avg_accuracy,
+        "propaganda_f1": pr_f1,
+        "statement_accuracy": st_acc,
+        "attribution_accuracy": at_acc,
+        "model_path": save_path,
+    }
 
 if __name__ == "__main__":
     run_classifier_training(task_name="multitask")
