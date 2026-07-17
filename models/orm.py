@@ -115,6 +115,7 @@ class TrainingJobORM(Base):
     propaganda_f1 = Column(Float, nullable=True)
     parse_failure_rate = Column(Float, nullable=True)
     model_path = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=False, nullable=False)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime,default=datetime.utcnow,nullable=False)

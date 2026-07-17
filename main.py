@@ -37,6 +37,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import BackgroundTasks
+
 from core.config import settings
 from db.session import get_db, init_db
 from engine.manager import SourceManager
@@ -44,7 +46,7 @@ from engine.manager import SourceManager
 from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus
 from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema
 from utils.logging import configure_logging
-from services.training_service import check_and_create_training_job
+from services.training_service import start_retraining_if_needed
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
 
@@ -358,6 +360,7 @@ async def save_summary_feedback(
 async def article_feedback_status(
     feedback_id: int,
     status:FeedbackStatusSchema ,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
@@ -379,15 +382,13 @@ async def article_feedback_status(
     await db.commit()
     await db.refresh(feedback)
 
-    training_job = None
 
     if feedback.status == FeedbackStatus.APPROVED:
-        training_job = await check_and_create_training_job()
+        background_tasks.add_task(start_retraining_if_needed)
 
     return {
         "message": "Feedback updated successfully",
         "status": feedback.status,
-        "training_job_id": training_job.id if training_job else None
     }
 
 

@@ -1,5 +1,8 @@
-
+import shutil
+from xml.parsers.expat import model
 from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -53,6 +56,28 @@ async def check_and_create_training_job()->TrainingJobORM | None:
         return None
     training_job=await create_training_job()
     return training_job
+
+async def get_active_training_job(session:AsyncSession)->TrainingJobORM|None:
+        stmt=(select(TrainingJobORM).where(TrainingJobORM.is_active==True))
+        result= await session.execute(stmt)
+        return result.scalar_one_or_none()
+    
+def is_new_model_better(active_job,metrics:dict)->bool:
+    if active_job is None:
+        return True
+    return (metrics["propaganda_f1"] >= active_job.propaganda_f1 and metrics["accuracy"] >= active_job.accuracy )
+
+
+async def rollback_training_job(session: AsyncSession,training_job_id: int,):
+    stmt = ( select(ArticleFeedbackORM).where( ArticleFeedbackORM.training_job_id == training_job_id ))
+
+    result = await session.execute(stmt)
+
+    feedbacks = result.scalars().all()
+
+    for feedback in feedbacks:
+        feedback.training_job_id = None
+            
 async def run_training_pipeline(job_id: int):
     async with AsyncSessionLocal() as session:
         training_job = await session.get(TrainingJobORM,job_id)
@@ -74,13 +99,29 @@ async def run_training_pipeline(job_id: int):
             training_job.propaganda_accuracy = metrics["propaganda_accuracy"]
             training_job.propaganda_f1 = metrics["propaganda_f1"]
             training_job.parse_failure_rate = metrics["parse_failure_rate"]
+            training_job.attribution_accuracy = metrics["attribution_accuracy"]
             training_job.model_path = metrics["model_path"]      
             training_job.status = "COMPLETED"
+
             print("Evaluate model...")
+
+            old_model=await get_active_training_job(session)
+
+            if is_new_model_better(old_model,metrics):
+                if old_model:
+                    old_model.is_active=False
+                training_job.is_active = True
+            await cleanup_old_models(session)
+
+
+            
             print("=" * 50)
         except Exception as e:
             training_job.status = "FAILED"
             training_job.error_message = str(e)
+            await rollback_training_job( session, training_job.id )
+
+
         finally:
             training_job.finished_at = datetime.now(UTC)
             await session.commit()
@@ -89,68 +130,46 @@ async def run_training_pipeline(job_id: int):
         return training_job
 
 
-async def create_test_feedbacks(count: int = 500):
+
+async def start_retraining_if_needed():
     async with AsyncSessionLocal() as session:
-        articles = (
-            await session.execute(
-                select(ArticleORM).limit(500)
-            )
-        ).scalars().all()
+        result=await session.execute(select(TrainingJobORM).where(TrainingJobORM.status.in_(["RUNNING","PENDING"])))
+        running_job=result.scalar_one_or_none()
+        if running_job is not None:
+            print("Training is already running.")
 
-        feedbacks = []
+            return None
+    
+    print("Checking retraining conditions...")
+    training_job = await check_and_create_training_job()
 
-        for article in articles:
-
-            feedback = ArticleFeedbackORM(
-                article_id=article.id,
-
-                propaganda_prediction="neutral",
-                statement_prediction="reporting",
-                attribution_prediction="supported_claim",
-
-                propaganda_correct=True,
-                statement_correct=True,
-                attribution_correct=True,
-
-                status=FeedbackStatus.APPROVED,
-            )
-
-            feedbacks.append(feedback)
-
-        session.add_all(feedbacks)
-
-        await session.commit()
     
 
+    if training_job is None:
+        return None
+
+    training_job = await run_training_pipeline(training_job.id)
+
+    return training_job
+
+async def cleanup_old_models(session: AsyncSession):
+    stmt = (select(TrainingJobORM).where(TrainingJobORM.status == "COMPLETED",TrainingJobORM.model_path.is_not(None)).order_by(TrainingJobORM.finished_at.desc()))
+
+    result = await session.execute(stmt)
+
+    models = result.scalars().all()
+    if len(models) <= 5:
+        return
+
+    for model in models[5:]:
+        if model.is_active:
+            continue
+        try:
+            if model.model_path and os.path.exists(model.model_path):
+                 shutil.rmtree(model.model_path)
+            model.model_path = None
+        except Exception as e:
+            print(f"Failed to delete model {model.model_path}:{e}")
 if __name__ == "__main__":
     import asyncio
-
-    async def test():
-        await init_db()
-
-        await create_test_feedbacks(500)
-
-        count = await count_unused_approved_feedbacks()
-
-        print("Unused approved feedbacks:", count)
-
-        should_train = await check_training_threshold()
-
-        print("Should start training:", should_train)
-
-        if should_train:
-            training_job = await create_training_job()
-
-            print("Training job ID:", training_job.id)
-            print("Feedback count:", training_job.feedback_count)
-            print("Status:", training_job.status)
-
-            training_job = await run_training_pipeline(training_job.id)
-
-            print("Final Status:", training_job.status)
-            print("Accuracy:", training_job.accuracy)
-        remaining_count = await count_unused_approved_feedbacks()
-
-        print("Remaining unused feedbacks:", remaining_count)
-
-    asyncio.run(test())
+    asyncio.run(start_retraining_if_needed())
