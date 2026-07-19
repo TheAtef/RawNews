@@ -146,7 +146,9 @@ async def start_retraining_if_needed():
     
 
     if training_job is None:
+        print("Not enough feedbacks to start training.")
         return None
+    
 
     training_job = await run_training_pipeline(training_job.id)
 

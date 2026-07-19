@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 import collections.abc
+from unittest import result
 
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
@@ -294,7 +295,7 @@ async def search_news(
     new_articles = await source_manager.search_google_news(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
     return {"status": "search_done", "config": {"query": query, "time_window": time_window, "limit": limit}, "count": len(new_articles), "results": [{"title": a.title, "content": a.content, "source": a.source_name, "url": a.url, "published_at": a.published_at, "scraped_at": a.scraped_at, "language": a.language} for a in new_articles ]}
 @app.post(
-    "/article_feedback"
+    "/article-feedback"
 )
 async def save_article_feedback(
     feedback:ArticleFeedbackSchema,
@@ -304,12 +305,13 @@ async def save_article_feedback(
     if article is None:
         raise HTTPException(status_code=404,detail="article not found")
 
+
     item=ArticleFeedbackORM(
         article_id=feedback.article_id,
 
-        propaganda_prediction=feedback.propaganda_prediction,
-        statement_prediction=feedback.statement_prediction,
-        attribution_prediction=feedback.attribution_prediction,
+        propaganda_prediction=article.propaganda_label,
+        statement_prediction=article.statement_type,
+        attribution_prediction=article.attribution_label,
 
         propaganda_correct=feedback.propaganda_correct,
         corrected_propaganda=feedback.corrected_propaganda,
@@ -421,8 +423,81 @@ async def summary_feedback_status(
         "message": "Feedback updated successfully",
         "status": feedback.status
     }
+@app.get("/article-feedback/pending")
+async def get_pending_feedback(
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(ArticleFeedbackORM,ArticleORM)
+        .join(ArticleORM,ArticleORM.id == ArticleFeedbackORM.article_id)
+        .where(ArticleFeedbackORM.status == FeedbackStatus.PENDING)
+        .order_by(ArticleFeedbackORM.id.desc())
+    )
 
+    feedbacks = result.all()
+    if not feedbacks:
+        return {
+            "message": "No pending feedback found.",
+            "data": []
+        }
 
+    return [
+        {
+            "id": feedback.id,
+            "article_id": article.id,
+            "article_title": article.title,
+            "submitted_at": feedback.created_at,
+            "propaganda_correct": feedback.propaganda_correct,
+            "statement_correct": feedback.statement_correct,
+            "attribution_correct": feedback.attribution_correct,
+        }
+        for feedback ,article in feedbacks
+    ]
+@app.get("/article-feedback/{feedback_id}")
+async def get_feedback_details(
+    feedback_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = (
+        select(ArticleFeedbackORM, ArticleORM).join(ArticleORM,ArticleORM.id == ArticleFeedbackORM.article_id)
+        .where(ArticleFeedbackORM.id == feedback_id))
+    result = await db.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404,detail="Feedback not found.")
+    feedback, article = row
+    return {
+        "message": "Feedback details retrieved successfully.",
+        "data": {
+            "article": {
+                "id": article.id,
+                "title": article.title,
+                "content": article.content,
+                "neutrality_score": article.neutrality_score,
+                "reliability_score": article.reliability_score,
+
+                "propaganda_prediction": article.propaganda_label,
+                "statement_prediction": article.statement_type,
+                "attribution_prediction": article.attribution_label,
+            },
+
+            "feedback": {
+                "id": feedback.id,
+                "status": feedback.status,
+
+                "propaganda_correct": feedback.propaganda_correct,
+                "corrected_propaganda": feedback.corrected_propaganda,
+
+                "statement_correct": feedback.statement_correct,
+                "corrected_statement": feedback.corrected_statement,
+
+                "attribution_correct": feedback.attribution_correct,
+                "corrected_attribution": feedback.corrected_attribution,
+
+                "notes": feedback.notes,
+            }
+        }
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
