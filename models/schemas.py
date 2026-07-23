@@ -41,10 +41,6 @@ class HealthResponse(BaseModel):
 
 class ArticleFeedbackSchema(BaseModel):
     article_id:int
-    propaganda_prediction: Optional[str] = None
-    statement_prediction: Optional[str] = None
-    attribution_prediction: Optional[str] = None
-
     propaganda_correct: Optional[bool] = None
     corrected_propaganda: Optional[str] = None
 
