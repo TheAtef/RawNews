@@ -35,51 +35,52 @@ import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text,or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import BackgroundTasks
+from services.background_fetch import (background_fetch_loop,stop_background_fetch,)
 
 from core.config import settings
 from db.session import get_db, init_db
 from engine.manager import SourceManager
 
 from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus
-from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema
+from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema,ArticleDetailsSchema,ArticleCardSchema,ArticleListResponse,ArticleSourceSchema,ArticleSourcesResponse
 from utils.logging import configure_logging
 from services.training_service import start_retraining_if_needed
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
 
 source_manager = SourceManager()
-_background_fetch_running = False
+# _background_fetch_running = False
 
 
 
-async def background_fetch_loop(interval_minutes: int = 30) -> None:
-    """Periodically fetch fresh news from all sources."""
-    global _background_fetch_running
-    _background_fetch_running = False
+# async def background_fetch_loop(interval_minutes: int = 30) -> None:
+#     """Periodically fetch fresh news from all sources."""
+#     global _background_fetch_running
+#     _background_fetch_running = False
 
-    # await asyncio.sleep(5)
+#     # await asyncio.sleep(5)
 
-    while _background_fetch_running:
-        try:
-            logger.info("background_fetch_starting")
-            from db.session import AsyncSessionLocal
-            async with AsyncSessionLocal() as db:
-                articles = await source_manager.fetch_all(
-                    session=db,
-                    max_per_source=settings.max_articles_per_source,
-                    age_hours=settings.article_max_age_hours,
-                    scrape_full_content=True,
-                )
-                await db.commit()
-                logger.info("background_fetch_done", new_articles=len(articles))
-        except Exception as e:
-            logger.error("background_fetch_error", error=str(e))
+#     while _background_fetch_running:
+#         try:
+#             logger.info("background_fetch_starting")
+#             from db.session import AsyncSessionLocal
+#             async with AsyncSessionLocal() as db:
+#                 articles = await source_manager.fetch_all(
+#                     session=db,
+#                     max_per_source=settings.max_articles_per_source,
+#                     age_hours=settings.article_max_age_hours,
+#                     scrape_full_content=True,
+#                 )
+#                 await db.commit()
+#                 logger.info("background_fetch_done", new_articles=len(articles))
+#         except Exception as e:
+#             logger.error("background_fetch_error", error=str(e))
 
-        await asyncio.sleep(interval_minutes * 60)
+#         await asyncio.sleep(interval_minutes * 60)
 
 
 
@@ -94,8 +95,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("startup_complete", host=settings.api_host, port=settings.api_port)
 
     yield 
-    global _background_fetch_running
-    _background_fetch_running = False
+    stop_background_fetch()
+
     fetch_task.cancel()
     try:
         await fetch_task
@@ -213,6 +214,343 @@ async def list_articles(
     result = await db.execute(stmt)
     articles = result.scalars().all()
     return [ArticleSchema.model_validate(a) for a in articles]
+
+
+@app.get(
+    "/articles/feed",
+    summary="News feed",
+    tags=["Articles"],
+)
+async def get_news_feed(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    source: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        stmt = select(ArticleORM)
+
+        if source:
+            stmt = stmt.where(
+                ArticleORM.source_name == source
+            )
+
+        total = await db.scalar(
+            select(func.count()).select_from(stmt.subquery())
+        )
+
+        result = await db.execute(
+            stmt.order_by(ArticleORM.published_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        articles = result.scalars().all()
+
+        if not articles:
+            return {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "has_next": False,
+                "articles": [],
+                "message": (
+                    "No articles found."
+                    if page == 1
+                    else "No articles found for this page."
+                ),
+            }
+
+        return {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_next": page * page_size < total,
+            "articles": [
+                ArticleCardSchema.model_validate(article)
+                for article in articles
+            ],
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve articles."
+        )
+
+
+
+
+@app.get(
+    "/articles/search",
+    response_model=ArticleListResponse,
+    summary="Search articles by keyword",
+    tags=["Articles"],
+)
+async def search_articles(
+    q: str = Query(..., min_length=1, description="Search keyword"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+
+        keyword = f"%{q.strip()}%"
+
+        stmt = (
+            select(ArticleORM)
+            .where(
+                or_(
+                    ArticleORM.title.ilike(keyword),
+                    ArticleORM.title_clean.ilike(keyword),
+                #     ArticleORM.content.ilike(keyword),
+                #     ArticleORM.content_clean.ilike(keyword),
+                )
+            )
+            .order_by(ArticleORM.published_at.desc())
+        )
+
+        total = await db.scalar(
+            select(func.count()).select_from(stmt.subquery())
+        )
+
+        result = await db.execute(
+            stmt.offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        articles = result.scalars().all()
+       
+        if not articles:
+            return ArticleListResponse(
+                page=page,
+                page_size=page_size,
+                total=0,
+                has_next=False,
+                message="No matching articles found.",
+                articles=[],
+            )
+
+        return ArticleListResponse(
+            page=page,
+            page_size=page_size,
+            total=total,
+            has_next=(page * page_size) < total,
+            articles=[
+                ArticleCardSchema.model_validate(article)
+                for article in articles
+            ],
+        )
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to search articles."
+        )
+
+
+@app.get(
+    "/articles/{article_id}/sources",
+    response_model=ArticleSourcesResponse,
+    summary="Get all news sources covering the same event",
+    tags=["Articles"],
+)
+async def get_article_sources(
+    article_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        article = await db.get(ArticleORM, article_id)
+
+        if article is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Article not found."
+            )
+
+        if article.cluster_id is None:
+            return ArticleSourcesResponse(
+                total=0,
+                message="This article does not belong to any cluster.",
+                sources=[]
+            )
+
+        stmt = (
+            select(
+                ArticleORM.source_name,
+                func.count(ArticleORM.id).label("articles_count")
+            )
+            .where(
+                ArticleORM.cluster_id == article.cluster_id
+            )
+            .group_by(ArticleORM.source_name)
+            .order_by(
+                func.count(ArticleORM.id).desc(),
+                ArticleORM.source_name
+            )
+        )
+
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        if not rows:
+            return ArticleSourcesResponse(
+                total=0,
+                message="No sources found.",
+                sources=[]
+            )
+
+        return ArticleSourcesResponse(
+            total=len(rows),
+            sources=[
+                ArticleSourceSchema(
+                    name=row.source_name,
+                    articles_count=row.articles_count,
+                )
+                for row in rows
+            ]
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve article sources."
+        )
+
+
+@app.get(
+    "/articles/{article_id}",
+    response_model=ArticleDetailsSchema,
+    summary="Get article details",
+    tags=["Articles"],
+)
+async def get_article_details(
+    article_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await db.execute(
+            select(ArticleORM).where(
+                ArticleORM.id == article_id
+            )
+        )
+
+        article = result.scalar_one_or_none()
+
+        if article is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Article not found."
+            )
+
+        return ArticleDetailsSchema.model_validate(article)
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve article."
+        )
+
+
+
+
+
+
+@app.get(
+    "/articles/{article_id}/related",
+    response_model=ArticleListResponse,
+    summary="Get related articles from the same event",
+    tags=["Articles"],
+)
+async def get_related_articles(
+    article_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        article = await db.get(ArticleORM, article_id)
+
+        if article is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Article not found."
+            )
+
+        if article.cluster_id is None:
+            return ArticleListResponse(
+                page=page,
+                page_size=page_size,
+                total=0,
+                has_next=False,
+                message="This article does not belong to any cluster.",
+                articles=[]
+            )
+
+        stmt = (
+            select(ArticleORM)
+            .where(
+                ArticleORM.cluster_id == article.cluster_id,
+                ArticleORM.id != article.id
+            )
+            .order_by(ArticleORM.verified.desc(),
+                ArticleORM.reliability_score.desc(),
+                ArticleORM.published_at.desc())
+                    )
+
+        total = await db.scalar(
+            select(func.count()).select_from(stmt.subquery())
+        )
+
+        result = await db.execute(
+            stmt.offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        related_articles = result.scalars().all()
+
+        if not related_articles:
+            return ArticleListResponse(
+                page=page,
+                page_size=page_size,
+                total=0,
+                has_next=False,
+                message="No related articles found.",
+                articles=[]
+            )
+
+        return ArticleListResponse(
+            page=page,
+            page_size=page_size,
+            total=total,
+            has_next=(page * page_size) < total,
+            articles=[
+                ArticleCardSchema.model_validate(article)
+                for article in related_articles
+            ]
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve related articles."
+        )
+
+
+    
+
+
+
+
 
 @app.get(
     "/stats",
@@ -343,11 +681,12 @@ async def save_summary_feedback(
     if article is None:
         raise HTTPException(status_code=404,detail="article not found")
 
-    item=SummaryFeedbackORM(
-         query=feedback.query,
-        generated_summary=feedback.generated_summary,
+    item = SummaryFeedbackORM(
+        article_id=article.id,
+        query=feedback.query,
         user_rating=feedback.user_rating,
         feedback_reason=feedback.feedback_reason,
+        generated_summary=feedback.generated_summary,
         corrected_summary=feedback.corrected_summary
     )
     db.add(item)
