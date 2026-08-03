@@ -89,9 +89,14 @@ class ArticleFeedbackORM(Base):
 class SummaryFeedbackORM(Base):
     __tablename__="summary_feedback"
     id=Column(Integer,primary_key=True)
-    query=Column(String(255),nullable=True)
+    article_id = Column(Integer,ForeignKey("articles.id"),nullable=False)
 
-    generated_summary=Column(Text,nullable=False)
+    article = relationship("ArticleORM")
+
+    generated_summary = Column(Text, nullable=False)
+
+    corrected_summary = Column(Text, nullable=True)
+    query=Column(String(255),nullable=True)
     user_rating=Column(Boolean,nullable=False)
     feedback_reason=Column(String(100),nullable=True)
 
