@@ -40,7 +40,7 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
 
             if not raw_articles:
                 logger.warning("No new articles met the criteria or were retrieved.")
-                return
+                return 
 
             logger.info(f"Processed and cached {len(raw_articles)} raw articles successfully.")
 
