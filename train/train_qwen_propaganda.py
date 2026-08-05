@@ -33,6 +33,16 @@ Output
 
 from __future__ import annotations
 
+import collections
+import collections.abc
+
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
+
 import gc
 import os
 import random
@@ -73,7 +83,7 @@ DATASET_ID = "QCRI/ArmPro"
 DATASET_SUBSET = "multilabel" 
 
 
-MERGE_BINARY_SUBSET = True
+MERGE_BINARY_SUBSET = False
 BINARY_SUBSET_NAME = "binary"
 
 
@@ -168,11 +178,12 @@ def _normalize_label(raw_label) -> str:
                 techniques.append(str(name).strip())
         if not techniques:
             return NEUTRAL_OUTPUT
-        seen = []
-        for t in techniques:
-            if t not in seen:
-                seen.append(t)
-        return " | ".join(seen)
+        # seen = []
+        # for t in techniques:
+        #     if t not in seen:
+        #         seen.append(t)
+        # return " | ".join(seen)
+        return techniques[0]  # just take the first technique for simplicity
 
     label_str = str(raw_label).strip()
     if label_str.lower() in {NO_TECHNIQUE_TOKEN, "false", "none", ""}:
@@ -411,13 +422,13 @@ def load_model_and_tokenizer():
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     quantization_config = None
-    if LOW_VRAM_MODE and torch.cuda.is_available():
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-        )
+    # if LOW_VRAM_MODE and torch.cuda.is_available():
+    #     quantization_config = BitsAndBytesConfig(
+    #         load_in_4bit=True,
+    #         bnb_4bit_quant_type="nf4",
+    #         bnb_4bit_compute_dtype=torch.bfloat16,
+    #         bnb_4bit_use_double_quant=True,
+    #     )
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
@@ -610,7 +621,7 @@ def train() -> None:
 
     sft_config = SFTConfig(
         output_dir=OUTPUT_DIR,
-        num_train_epochs=2,
+        num_train_epochs=3,
         per_device_train_batch_size=TRAIN_BATCH_SIZE,
         per_device_eval_batch_size=EVAL_BATCH_SIZE,
         gradient_accumulation_steps=GRAD_ACCUM_STEPS,

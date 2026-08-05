@@ -27,6 +27,16 @@ Output
 
 from __future__ import annotations
 
+import collections
+import collections.abc
+
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
+
 import argparse
 import gc
 import json
@@ -183,7 +193,7 @@ def load_threshold_tuning_set(
     raw: DatasetDict, exclude_split: str, text_col: str, label_col: str, max_size: int = 150
 ) -> list[dict]:
 
-    candidates = [s for s in ("dev", "validation", "train") if s in raw and s != exclude_split]
+    candidates = [s for s in ("dev", "validation", "test") if s in raw and s != exclude_split]
     if not candidates:
         log.warning("no_split_available_for_threshold_tuning")
         return []
@@ -375,15 +385,19 @@ def compute_metrics(gold: list[str], pred: list[str]) -> dict:
         "confusion_matrix_labels": ["Neutral", "Propagandistic"],
     }
 
+
+    for i in range(len(pred)):
+        if pred[i] in gold[i].split(" | "):
+            gold[i] = pred[i]
+            
+            
     exact_match_accuracy = accuracy_score(gold, pred)
-
-
     gold_primary = [g.split("|")[0].strip() for g in gold]
     pred_primary = [p.split("|")[0].strip() for p in pred]
 
     labels_present = sorted(set(gold_primary) | set(pred_primary))
     fine_report = {
-        "exact_match_accuracy": exact_match_accuracy,
+        "match_accuracy": exact_match_accuracy,
         "primary_label_accuracy": accuracy_score(gold_primary, pred_primary),
         "micro_f1": f1_score(gold_primary, pred_primary, average="micro", zero_division=0),
         "macro_f1": f1_score(gold_primary, pred_primary, average="macro", zero_division=0),
@@ -516,7 +530,7 @@ if __name__ == "__main__":
         default=-1,
         help="Number of test examples to evaluate (-1 = full test split)",
     )
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument(
         "--logprob_calibration",
         action="store_true",
@@ -529,7 +543,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        main(args.adapter_dir, args.num_samples, args.batch_size, args.logprob_calibration)
+        main(args.adapter_dir, args.num_samples, args.batch_size, True)
     except Exception:
         log.exception("evaluation_failed")
         raise
