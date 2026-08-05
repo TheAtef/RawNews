@@ -138,3 +138,43 @@ class ArticleSourcesResponse(BaseModel):
     message: Optional[str] = None
     sources: List[ArticleSourceSchema]
 
+
+class ArticleSearchResultSchema(BaseModel):
+    id: int
+    url:str
+
+    title: str
+    source_name: str
+
+    published_at: Optional[datetime] = None
+
+    reliability_score: Optional[float] = None
+    neutrality_score: Optional[float] = None
+
+    verified: bool
+
+    statement_type: Optional[str] = None
+    attribution_label: Optional[str] = None
+    propaganda_label: Optional[str] = None
+
+    cluster_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SearchClusterSchema(BaseModel):
+    cluster_id: int
+
+    summary: Optional[str] = None
+
+    articles: List[ArticleSearchResultSchema]
+
+class SearchResponseSchema(BaseModel):
+    status: str
+
+    query: str
+    time_window: str
+
+    clusters: List[SearchClusterSchema]
+
