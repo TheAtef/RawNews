@@ -89,20 +89,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("startup_begin", version=settings.app_version)
     await init_db()
     logger.info("database_initialized")
-    fetch_task = asyncio.create_task(background_fetch_loop(interval_minutes=30))
-    logger.info("background_fetch_scheduled")
+    # fetch_task = asyncio.create_task(background_fetch_loop(interval_minutes=30))
+    # logger.info("background_fetch_scheduled")
 
-    logger.info("startup_complete", host=settings.api_host, port=settings.api_port)
+    # logger.info("startup_complete", host=settings.api_host, port=settings.api_port)
 
     yield 
-    stop_background_fetch()
+    # stop_background_fetch()
 
-    fetch_task.cancel()
-    try:
-        await fetch_task
-    except asyncio.CancelledError:
-        pass
-    logger.info("shutdown_complete")
+    # fetch_task.cancel()
+    # try:
+    #     await fetch_task
+    # except asyncio.CancelledError:
+    #     pass
+    # logger.info("shutdown_complete")
     
 app = FastAPI(
     title=settings.app_name,

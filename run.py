@@ -5,6 +5,7 @@ import logging
 import sys
 from collections import defaultdict
 from sqlalchemy import select
+from engine.synthesizer import NewsSynthesizer
 
 from db.session import init_db, AsyncSessionLocal, engine
 from engine.manager import SourceManager
@@ -26,6 +27,8 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
     logger.info(f"Starting Google News search for query: '{search_query}' (Window: {time_window})")
     
     manager = SourceManager()
+    
+    synthesizer = NewsSynthesizer()
 
     async with AsyncSessionLocal() as session:
         try:
@@ -40,7 +43,7 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
 
             if not raw_articles:
                 logger.warning("No new articles met the criteria or were retrieved.")
-                return
+                return 
 
             logger.info(f"Processed and cached {len(raw_articles)} raw articles successfully.")
 
@@ -55,22 +58,29 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
             logger.info(f"Identified {len(story_clusters)} active story clusters in local database.")
 
             for cluster_id, articles in story_clusters.items():
-                print("\n" + "=" * 60)
-                print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
-                print("=" * 60)
+                            print("\n" + "=" * 60)
+                            print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
+                            print("=" * 60)
+                            
+                            articles_content = []
+                            
+                            for idx, art in enumerate(articles, 1):
+                                bias_percentage = round((1.0 - art.neutrality_score) * 100, 1)
 
-                for idx, art in enumerate(articles, 1):
-                    bias_percentage = round((1.0 - art.neutrality_score) * 100, 1)
-
-                    print(f"  {idx}. [{art.source_name}] {art.title}")
-                    print(f"     └─ Heuristic Statement Type: {art.statement_type}")
-                    print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
-                    print(f"     └─ Qwen Propaganda:          {art.propaganda_label}") 
-                    print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
-                    print(f"     └─ Reliability Score:        {art.reliability_score}")
-                    print("-" * 50)
-                print("=" * 60 + "\n")
-
+                                print(f"  {idx}. [{art.source_name}] {art.title}")
+                                print(f"     └─ Heuristic Statement Type: {art.statement_type}")
+                                print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
+                                print(f"     └─ Qwen Propaganda:          {art.propaganda_label}") 
+                                print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
+                                print(f"     └─ Reliability Score:        {art.reliability_score}")
+                                print("-" * 50)
+                                
+                                articles_content.append(art.content_clean or art.content or art.title)
+                            
+                            summary = await synthesizer.synthesize_cluster(articles_content)
+                            print("\n Neutral Summary ")
+                            print(summary)
+                            print("=" * 60 + "\n")
         except Exception as e:
             logger.error(f"Pipeline execution encountered an exception: {e}", exc_info=True)
             await session.rollback()
