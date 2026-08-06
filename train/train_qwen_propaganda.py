@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import collections
 import collections.abc
+import sys
 
 
 collections.Mapping = collections.abc.Mapping
@@ -48,7 +49,10 @@ import os
 import random
 from pathlib import Path
 from typing import Optional
-
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -68,7 +72,9 @@ from transformers import (
 from trl import SFTConfig, SFTTrainer
 import re
 import time
-
+from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
+from preprocessing.propaganda_features import calculate_loaded_words_ratio
+from core.constants import ARABIC_STOPWORDS
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
@@ -94,11 +100,11 @@ SEED = 42
 LOW_VRAM_MODE = True
 
 if LOW_VRAM_MODE:
-    MAX_SEQ_LEN = 512
+    MAX_SEQ_LEN = 1024
 
-    TRAIN_BATCH_SIZE = 2
+    TRAIN_BATCH_SIZE = 1
     EVAL_BATCH_SIZE = 2
-    GRAD_ACCUM_STEPS = 8  
+    GRAD_ACCUM_STEPS = 16  
 else:
     MAX_SEQ_LEN = 1024
     TRAIN_BATCH_SIZE = 4
@@ -114,10 +120,10 @@ NEUTRAL_OUTPUT = "Neutral"
 
 REBALANCE_TRAIN_SET = True
 
-TARGET_PROPAGANDA_RATIO = 0.40
+TARGET_PROPAGANDA_RATIO = 0.50
 
 
-MAX_TRAIN_HOURS = 7.5
+MAX_TRAIN_HOURS = 10
 
 
 ENABLE_ACCURACY_PROBE_DURING_TRAINING = False
@@ -136,19 +142,22 @@ SYSTEM_PROMPT = (
     "Verdict: Propaganda\n"
     "Technique: Loaded_Language"
 )
-
 USER_INSTRUCTION_TEMPLATE = (
-    "حلل الفقرة الإخبارية التالية وحدد ما إذا كانت تحتوي على أساليب دعائية "
-    "(مثل: التحميل اللغوي، التسمية/التشهير، المبالغة أو التهوين، الاستقطاب، "
-    "مناشدة السلطة، التشكيك، التبسيط السببي، وغيرها).\n\n"
+    "حلل الفقرة الإخبارية التالية وحدد ما إذا كانت تحتوي على أساليب دعائية.\n\n"
+    "معلومات مساعدة للمحلل:\n"
+    "- نسبة الكلمات المشحونة عاطفياً: {loaded_ratio}%\n\n"
+    "إليك تعريف ببعض الأساليب الدعائية لتسهيل التعرف عليها:\n"
+    "- Loaded_Language: استخدام كلمات وعبارات عاطفية قوية للتأثير على القارئ.\n"
+    "- Name_Calling-Labeling: إطلاق ألقاب مسيئة أو تصنيفات سلبية على شخص أو جهة.\n"
+    "- Exaggeration-Minimisation: تضخيم الأمور بشكل مبالغ فيه أو التقليل من شأنها.\n"
+    "- Doubt: إثارة الشكوك حول مصداقية أو دوافع شخص أو جهة.\n"
+    "- False_Dilemma-No_Choice: الإيحاء بأنه لا يوجد سوى خيارين فقط (الاستقطاب).\n"
+    "- Causal_Oversimplification: التبسيط المخل لأسباب مشكلة معقدة.\n\n"
     "أعد الإجابة بالضبط بهذا التنسيق:\n"
     "Verdict: Propaganda أو Verdict: Neutral\n"
     "إذا كان الحكم Propaganda، أضف سطرا ثانيا: Technique: <نوع الأسلوب الدعائي>\n\n"
     "الفقرة:\n{paragraph}"
 )
-
-
-
 def _detect_column(dataset: Dataset, candidates: list[str], role: str) -> str:
     columns = set(dataset.column_names)
     for candidate in candidates:
@@ -192,7 +201,6 @@ def _normalize_label(raw_label) -> str:
         return "Propaganda"
     return label_str
 
-
 def _load_binary_subset_as_verdict_only(tokenizer: AutoTokenizer) -> Optional[Dataset]:
     try:
         binary_raw = load_dataset(DATASET_ID, BINARY_SUBSET_NAME)
@@ -216,14 +224,23 @@ def _load_binary_subset_as_verdict_only(tokenizer: AutoTokenizer) -> Optional[Da
         lambda ex: bool(ex.get(bin_text_col)) and len(str(ex[bin_text_col]).strip()) >= 10
     )
 
+    tokenizer_ar = ArabicTokenizer()
+    stop_filter = ArabicStopwordFilter(extra_stopwords=ARABIC_STOPWORDS)
+
     def to_conversation_verdict_only(example: dict) -> dict:
         paragraph = str(example.get(bin_text_col) or "").strip()
         verdict = _normalize_label(example.get(bin_label_col))
         is_propaganda = verdict.strip().lower() != NEUTRAL_OUTPUT.lower()
+        
+        tokens = tokenizer_ar.tokenize(paragraph)
+        filtered_tokens = stop_filter.filter(tokens)
+        ratio = calculate_loaded_words_ratio(filtered_tokens)
+        ratio_str = f"{ratio * 100:.1f}"
+
         assistant_msg = "Verdict: Propaganda" if is_propaganda else "Verdict: Neutral"
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph)},
+            {"role": "user", "content": USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph, loaded_ratio=ratio_str)},
             {"role": "assistant", "content": assistant_msg},
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
@@ -261,13 +278,19 @@ def load_and_prepare_armpro(tokenizer: AutoTokenizer) -> tuple[DatasetDict, list
     probe_split_name = next(
         (s for s in ("dev", "validation", "test") if s in raw), "train"
     )
-
+    tokenizer_ar = ArabicTokenizer()
+    stop_filter = ArabicStopwordFilter(extra_stopwords=ARABIC_STOPWORDS)
     def to_conversation(example: dict) -> dict:
         paragraph = (example.get(text_col) or "").strip()
         technique = _normalize_label(example.get(label_col))
         is_propaganda = technique.strip().lower() != NEUTRAL_OUTPUT.lower()
 
-        user_msg = USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph)
+        tokens = tokenizer_ar.tokenize(paragraph)
+        filtered_tokens = stop_filter.filter(tokens)
+        ratio = calculate_loaded_words_ratio(filtered_tokens)
+        ratio_str = f"{ratio * 100:.1f}"
+
+        user_msg = USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph, loaded_ratio=ratio_str)
 
         if is_propaganda:
             assistant_msg = f"Verdict: Propaganda\nTechnique: {technique}"
@@ -455,8 +478,8 @@ def load_model_and_tokenizer():
 def build_lora_config() -> LoraConfig:
     return LoraConfig(
         task_type=TaskType.CAUSAL_LM,
-        r=24,
-        lora_alpha=48,
+        r=32,
+        lora_alpha=64,
         lora_dropout=0.05,
         bias="none",
         target_modules=[
