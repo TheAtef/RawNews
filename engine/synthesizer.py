@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import httpx
 import torch
 import gc
@@ -16,27 +17,35 @@ class NewsSynthesizer:
         self.use_local = settings.use_local_gemma_pipeline
         self.tokenizer = None
         self.model = None
-        
+        self.is_enabled = False
 
-        if self.tokenizer is None or self.model is None:
-            logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
-            self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
-            device = "cpu"
-            if torch.cuda.is_available():
-                total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                if total_vram > 8.1: 
-                    device = "cuda"
+        try:
+            if settings.gemma_model_id.startswith("./") and not os.path.exists(settings.gemma_model_id):
+                logger.warning("summarizer_model_not_found", path=settings.gemma_model_id)
+                return
 
-            logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id, target_device=device)
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                settings.gemma_model_id,
-                # token=hf_token
-            )
-            self.model = AutoModelForCausalLM.from_pretrained(
-                settings.gemma_model_id,
-                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map="cuda"
-            )
+            if self.tokenizer is None or self.model is None:
+                logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
+                self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
+                device = "cpu"
+                if torch.cuda.is_available():
+                    total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                    if total_vram > 8.1: 
+                        device = "cuda"
+
+                logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id, target_device=device)
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    settings.gemma_model_id,
+                    # token=hf_token
+                )
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    settings.gemma_model_id,
+                    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                    device_map="cuda"
+                )
+                self.is_enabled = True
+        except Exception as e:
+            logger.error("summarizer_init_failed", error=str(e))
 
     # def _init_local_pipeline(self) -> None:
     #     if self.tokenizer is None or self.model is None:
@@ -72,6 +81,9 @@ class NewsSynthesizer:
     async def synthesize_cluster(self, articles_content: List[str]) -> str:
         if not articles_content:
             return ""
+
+        if not self.is_enabled:
+            return "AI Summary is currently unavailable because the summarization model has not been trained/downloaded to the server yet."
 
         prompt = self._build_prompt(articles_content)
 
