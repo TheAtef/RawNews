@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
     
-    database_url: str = "sqlite+aiosqlite:///./arabic_news.db"
-    database_path: str = "./arabic_news.db"
+    database_url: str 
+    # database_path: str = "./arabic_news.db"
 
     fetch_timeout_seconds: int = 15
     max_articles_per_source: int = 50
