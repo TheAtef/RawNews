@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone 
 from db.base import Base
 from enum import Enum as pyenum
 from sqlalchemy import (
@@ -48,8 +48,8 @@ class ArticleORM(Base):
     attribution_label = Column(String(100), nullable=True)      
     verified = Column(Boolean, default=False, nullable=False)
 
-    published_at = Column(DateTime, nullable=True, index=True)
-    scraped_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    published_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    scraped_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     language = Column(String(10), default="ar")
     is_processed = Column(Boolean, default=False, index=True)
     word_count = Column(Integer, nullable=True)
@@ -96,7 +96,7 @@ class ArticleFeedbackORM(Base):
     )
     admin_notes = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class SummaryFeedbackORM(Base):
@@ -115,9 +115,9 @@ class SummaryFeedbackORM(Base):
     query=Column(String(255),nullable=True)
     user_rating=Column(Boolean,nullable=False)
     feedback_reason=Column(String(100),nullable=True)
-    created_at=Column(DateTime,default=datetime.utcnow)
+    created_at=Column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc))
     status = Column(
-        Enum(FeedbackStatus,values_callable=lambda enum: [e.value for e in enum]),
+        Enum(FeedbackStatus, values_callable=lambda enum: [e.value for e in enum]),
         default=FeedbackStatus.PENDING,
         nullable=False
     )
@@ -134,9 +134,8 @@ class TrainingJobORM(Base):
     parse_failure_rate = Column(Float, nullable=True)
     model_path = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=False, nullable=False)
-    started_at = Column(DateTime, nullable=True)
-    finished_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime,default=datetime.utcnow,nullable=False)
+    started_at = Column(DateTime(timezone=True),nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     error_message = Column(Text, nullable=True)
-    feedbacks = relationship("ArticleFeedbackORM",back_populates="training_job")
-
+    feedbacks = relationship("ArticleFeedbackORM", back_populates="training_job")
