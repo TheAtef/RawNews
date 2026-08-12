@@ -1,5 +1,4 @@
 checkpoints/
-models/
 train/*.jsonl
 dataset_new.jsonl
 *.db

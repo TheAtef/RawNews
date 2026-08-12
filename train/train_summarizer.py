@@ -17,6 +17,7 @@ import sys
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
 import torch
+torch.cuda.empty_cache()
 import structlog
 from datasets import Dataset, load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
@@ -63,11 +64,11 @@ def train_gemma_summarizer():
     model_id = "google/gemma-3-1b-it" # 2GB    
     dataset = load_dataset("arbml/AraSum", split="train")
 
-    shuffled_dataset = dataset.shuffle(seed=42)
+    shuffled_dataset = dataset.shuffle(seed=11)
 
     total_rows = shuffled_dataset.num_rows
-    batch_size = 500
-    num_batches = 6
+    batch_size = 250
+    num_batches = 24
 
     step = (total_rows - batch_size) // (num_batches - 1)
 
@@ -84,7 +85,7 @@ def train_gemma_summarizer():
     print(final_dataset)
     
     
-    split = final_dataset.train_test_split(test_size=0.1, seed=42)
+    split = final_dataset.train_test_split(test_size=0.1, seed=11)
     train_df = split['train']
     test_df = split['test']
     
@@ -126,7 +127,7 @@ def train_gemma_summarizer():
     )
     
     training_args = SFTConfig(
-        output_dir="./train/checkpoints/gemma2_summarizer",
+        output_dir="./train/checkpoints/gemma3_summarizer_2",
         save_strategy="no",
         # save_total_limit=2,
         per_device_train_batch_size=2,
@@ -156,7 +157,7 @@ def train_gemma_summarizer():
     torch.cuda.empty_cache()
     trainer.train()
     
-    save_path = "./train/models/gemma3_1b_arabic_summarizer_adapter"
+    save_path = "./train/models/gemma3_1b_arabic_summarizer_adapter_2"
     trainer.model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
     print(f"Summarizer adapters successfully saved to: {save_path}")
