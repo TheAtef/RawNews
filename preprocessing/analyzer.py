@@ -24,7 +24,7 @@ SOURCE_AUTHORITY: Dict[str, float] = {
 
 # preprocessing/analyzer.py
 from train.prompt_utils import build_messages, parse_output
-from transformers import AutoModelForCausalLM # Import CausalLM instead of SequenceClassification
+from transformers import AutoModelForCausalLM 
 
 class AraBERTClassifier:
     def __init__(self) -> None:
@@ -40,8 +40,10 @@ class AraBERTClassifier:
         except Exception as e:
             logger.error("qwen_classifier_init_failed", error=str(e))
             self.enabled = False
+
     def classify_propaganda(self, text: str, title: str, loaded_words_ratio: float) -> str:
         if not self.enabled or not text.strip():
+            logger.warning("classifier_disabled_or_empty_text", enabled=self.enabled)
             return "neutral"
 
         try:
@@ -67,11 +69,20 @@ class AraBERTClassifier:
             generated_tokens = outputs[0][inputs.input_ids.shape[-1]:]
             decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-            return parse_output(decoded_output)
+            prediction = parse_output(decoded_output)
+
+            print("\n================ [PROPAGANDA MODEL DEBUG] ================")
+            print(f" Title: {title[:60]}...")
+            print(f" Loaded Words Ratio: {loaded_words_ratio * 100:.2f}%")
+            print(f" Raw Model Text Output: '{decoded_output}'")
+            print(f" Final Parsed Label: '{prediction}'")
+            print("=========================================================\n")
+
+            return prediction
 
         except Exception as e:
             logger.error("qwen_inference_error", error=str(e))
-            return "neutral"
+            return "Error"
 class HeuristicScorer:
     def __init__(self, source_registry: Dict[str, float] = None):
         self.source_registry = source_registry if source_registry is not None else SOURCE_AUTHORITY
