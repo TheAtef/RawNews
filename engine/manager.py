@@ -412,10 +412,11 @@ class SourceManager:
 
             is_verified = (
                 scores["reliability_score"] >= 0.70 and 
+                scores["neutrality_score"] >= 0.60 and          
+                computed_statement == "reporting" and           
                 computed_attribution == "supported_claim" and 
-                predicted_propaganda != "propaganda"
+                predicted_propaganda.lower() in ("neutral", "no_propaganda")
             )
-
             article_orm = ArticleORM(
                 url=raw.url,
                 source_name=raw.source_name,

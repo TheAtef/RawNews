@@ -22,7 +22,6 @@ SOURCE_AUTHORITY: Dict[str, float] = {
 #     LOADED_WORDS.update(category_dict.keys())
 
 
-# preprocessing/analyzer.py
 from train.prompt_utils import build_messages, parse_output
 from transformers import AutoModelForCausalLM 
 
@@ -62,14 +61,13 @@ class AraBERTClassifier:
 
             with torch.no_grad():
                 outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=30,
-                    temperature=0.3,  
-                    do_sample=True,   
-                    top_p=0.85,       
-                    eos_token_id=self.tokenizer.eos_token_id
-                )
-
+                        **inputs,
+                        max_new_tokens=25,
+                        do_sample=False,        
+                        temperature=None,      
+                        top_p=None,           
+                        eos_token_id=self.tokenizer.eos_token_id
+                                )
             generated_tokens = outputs[0][inputs.input_ids.shape[-1]:]
             decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 

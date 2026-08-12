@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import httpx
 import torch
 import gc
@@ -27,54 +28,36 @@ class NewsSynthesizer:
             if self.tokenizer is None or self.model is None:
                 logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
                 self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
-                device = "cpu"
-                if torch.cuda.is_available():
-                    total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                    if total_vram > 8.1: 
-                        device = "cuda"
-
-                logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id, target_device=device)
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    settings.gemma_model_id,
-                    # token=hf_token
-                )
+                
                 self.model = AutoModelForCausalLM.from_pretrained(
                     settings.gemma_model_id,
                     torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                    device_map="cuda"
+                    device_map="cuda" if torch.cuda.is_available() else "cpu"
                 )
                 self.is_enabled = True
         except Exception as e:
             logger.error("summarizer_init_failed", error=str(e))
 
-    # def _init_local_pipeline(self) -> None:
-    #     if self.tokenizer is None or self.model is None:
-    #         logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
-    #         self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
-    #         self.model = AutoModelForCausalLM.from_pretrained(
-    #             settings.gemma_model_id,
-    #             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-    #             device_map="cuda"
-    #         )
-
     def _build_prompt(self, articles_content: List[str]) -> str:
-        combined_texts = ""
+        combined_texts = []
         for idx, text in enumerate(articles_content):
-            trimmed_text = text.strip()[:1200]
-            combined_texts += f"\n--- رواية المصدر {idx + 1} ---\n{trimmed_text}\n"
+            trimmed_text = text.strip()[:1800]
+            if trimmed_text:
+                combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
+
+        joined_articles = "\n\n".join(combined_texts)
 
         prompt = (
             "<start_of_turn>user\n"
-            "أنت محرر صحفي محايد. مهمتك هي صياغة تقرير موحد وموضوعي باللغة العربية بناءً على الروايات المختلفة التالية لنفس الحدث.\n"
-            "التزم بالقواعد التالية:\n"
-            "1. اعتمد فقط على الحقائق المشتركة والمتقاطعة بين المصادر.\n"
-            "2. تجنب تبني سردية أي طرف، واكتب بلغة رصينة خالية من العواطف أو الكلمات الانحيازية.\n"
-            "3. إذا وجدت تناقضاً جوهرياً بين الروايات دون دليل حاسم، أشر إلى هذا الاختلاف بحيادية تامة دون ترجيح.\n"
-            "4. لا تضف أي معلومات خارجية أو استنتاجات شخصية غير واردة في النصوص.\n\n"
-            f"النصوص الإخبارية المراد تلخيصها:\n{combined_texts}\n"
+            "أنت محرر صحفي محايد. قم بكتابة تقرير إخباري مفصل وشامل يغطي 3 جوانب رئيسية بناءً على المصادر المعطاة:\n\n"
+            "1. تفاصيل الحدث الرئيسي والتطورات الأساسية المذكورة في المصادر.\n"
+            "2. مواقف وتصريحات وردود أفعال كافة الأطراف والجهات المعنية.\n"
+            "3. التحليلات والتقارير الصحفية المتعلقة بالنواحي الخلافية والتبعات المستقبلية.\n\n"
+            f"المصادر الإخبارية:\n{joined_articles}\n"
             "<end_of_turn>\n"
             "<start_of_turn>model\n"
-            "التقرير الصحفي الموحد والحيادي:\n"
+            "التقرير الصحفي الموحد:\n\n"
+            "1. تفاصيل الحدث الرئيسي:\n"
         )
         return prompt
 
@@ -83,7 +66,7 @@ class NewsSynthesizer:
             return ""
 
         if not self.is_enabled:
-            return "AI Summary is currently unavailable because the summarization model has not been trained/downloaded to the server yet."
+            return "AI Summary is currently unavailable."
 
         prompt = self._build_prompt(articles_content)
 
@@ -94,21 +77,29 @@ class NewsSynthesizer:
                 gc.collect()
 
                 inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+                input_length = inputs["input_ids"].shape[1]
+
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=800,  
-                        temperature=0.2,
-                        do_sample=True
+                        max_new_tokens=700,
+                        temperature=0.3,
+                        repetition_penalty=1.15,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
                     )
-                decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                
+
+                generated_tokens = outputs[0][input_length:]
+                decoded = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+
+                final_summary = "1. تفاصيل الحدث الرئيسي:\n" + decoded
+
+                final_summary = re.sub(r"<[^>]+>", "", final_summary).strip()
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                if "التقرير الصحفي الموحد والحيادي:" in decoded:
-                    return decoded.split("التقرير الصحفي الموحد والحيادي:")[-1].strip()
-                return decoded.strip()
+                return final_summary
             except Exception as e:
                 logger.error("local_gemma_synthesis_failed", error=str(e))
                 return ""
