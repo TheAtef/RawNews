@@ -104,15 +104,13 @@ class ArticleFeedbackSchema(BaseModel):
 
 
 class SummaryFeedbackSchemma(BaseModel):
-    article_id: int
+    cluster_id: int
     query: Optional[str] = None
-
     generated_summary: str
     user_rating: bool
     feedback_reason: Optional[str] = None
     corrected_summary: Optional[str] = None
 
-    
 class FeedbackStatusSchema(BaseModel):
     status: FeedbackStatus
     admin_notes: Optional[str] = None

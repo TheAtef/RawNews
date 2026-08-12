@@ -279,76 +279,7 @@ async def get_news_feed(
             detail="Failed to retrieve articles."
         )
 
-
-
-
-# @app.get(
-#     "/articles/search",
-#     response_model=ArticleListResponse,
-#     summary="Search articles by keyword",
-#     tags=["Articles"],
-# )
-# async def search_articles(
-#     q: str = Query(..., min_length=1, description="Search keyword"),
-#     page: int = Query(1, ge=1),
-#     page_size: int = Query(10, ge=1, le=50),
-#     db: AsyncSession = Depends(get_db),
-# ):
-#     try:
-
-#         keyword = f"%{q.strip()}%"
-
-#         stmt = (
-#             select(ArticleORM)
-#             .where(
-#                 or_(
-#                     ArticleORM.title.ilike(keyword),
-#                     ArticleORM.title_clean.ilike(keyword),
-#                 #     ArticleORM.content.ilike(keyword),
-#                 #     ArticleORM.content_clean.ilike(keyword),
-#                 )
-#             )
-#             .order_by(ArticleORM.published_at.desc())
-#         )
-
-#         total = await db.scalar(
-#             select(func.count()).select_from(stmt.subquery())
-#         )
-
-#         result = await db.execute(
-#             stmt.offset((page - 1) * page_size)
-#             .limit(page_size)
-#         )
-
-#         articles = result.scalars().all()
-       
-#         if not articles:
-#             return ArticleListResponse(
-#                 page=page,
-#                 page_size=page_size,
-#                 total=0,
-#                 has_next=False,
-#                 message="No matching articles found.",
-#                 articles=[],
-#             )
-
-#         return ArticleListResponse(
-#             page=page,
-#             page_size=page_size,
-#             total=total,
-#             has_next=(page * page_size) < total,
-#             articles=[
-#                 ArticleCardSchema.model_validate(article)
-#                 for article in articles
-#             ],
-#         )
-
-#     except Exception:
-#         raise HTTPException(
-#             status_code=500,
-#             detail="Failed to search articles."
-#         )
-
+    
 @app.get(
     "/search",
     response_model=SearchResponseSchema,
@@ -699,19 +630,16 @@ async def save_article_feedback(
         "status":"saved",
         "feedback_id":item.id
     }
-@app.post(
-    "/summary_feedback"
-)
+
+
+@app.post("/summary_feedback")
 async def save_summary_feedback(
     feedback:SummaryFeedbackSchemma,
     db:AsyncSession=Depends(get_db)
 ):
-    article=await db.get(ArticleORM,feedback.article_id)
-    if article is None:
-        raise HTTPException(status_code=404,detail="article not found")
-
+    
     item = SummaryFeedbackORM(
-        article_id=article.id,
+        cluster_id=feedback.cluster_id,
         query=feedback.query,
         user_rating=feedback.user_rating,
         feedback_reason=feedback.feedback_reason,
