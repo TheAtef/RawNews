@@ -1,7 +1,7 @@
 from __future__ import annotations
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 import numpy as np
 import structlog
@@ -12,8 +12,7 @@ from core.sources_list import ARABIC_NEWS_SOURCES
 from core.constants import ARABIC_STOPWORDS, ARABIC_BOILERPLATE_KEYWORDS, GEO_DOMAINS, IGNORE_TITLE_WORDS
 from engine.fetcher import ArticleScraper, RSSFetcher, GoogleNews
 from engine.scraper import RawArticle
-from models.orm import ArticleORM
-
+from models.orm import ArticleORM, ClusterORM
 from preprocessing.cleaner import ArabicNewsCleaner
 from preprocessing.normalizer import ArabicNormalizer
 from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
@@ -230,6 +229,8 @@ class SourceManager:
         self,
         session: AsyncSession,
         raw_articles: List[RawArticle],
+        query: Optional[str] = None,
+
     ) -> List[ArticleORM]:
         if not raw_articles:
             return []
@@ -251,10 +252,20 @@ class SourceManager:
         active_result = await session.execute(active_stmt)
         active_articles = list(active_result.scalars().all())
 
-        max_id_stmt = select(ArticleORM.cluster_id).order_by(ArticleORM.cluster_id.desc()).limit(1)
-        max_id_res = await session.execute(max_id_stmt)
-        max_id_row = max_id_res.fetchone()
-        next_cluster_id = (max_id_row[0] + 1) if max_id_row and max_id_row[0] else 1
+
+
+        # max_id_stmt = select(ArticleORM.cluster_id).order_by(ArticleORM.cluster_id.desc()).limit(1)
+        # max_id_res = await session.execute(max_id_stmt)
+        # max_id_row = max_id_res.fetchone()
+        # next_cluster_id = (max_id_row[0] + 1) if max_id_row and max_id_row[0] else 1
+
+
+        #############################################################################################3
+
+        existing_clusters_stmt = select(ClusterORM)
+        existing_clusters_result = await session.execute(existing_clusters_stmt)
+        existing_clusters = {cluster.id: cluster for cluster in existing_clusters_result.scalars().all()}
+        #########################################################################################
 
         new_articles: List[ArticleORM] = []
 
@@ -381,8 +392,17 @@ class SourceManager:
                     assigned_cluster_id = best_cluster_id
 
             if assigned_cluster_id is None:
-                assigned_cluster_id = next_cluster_id
-                next_cluster_id += 1
+                # assigned_cluster_id = next_cluster_id
+                # next_cluster_id += 1
+                #######################################################3
+                new_cluster = ClusterORM(query=query)
+                session.add(new_cluster)
+                await session.flush()
+                assigned_cluster_id = new_cluster.id
+                existing_clusters[assigned_cluster_id] = new_cluster
+###########################################################################33
+
+
 
             tokens = self._tokenizer.tokenize(normalized_content)
             filtered_tokens = self._stop_filter.filter(tokens)
@@ -508,6 +528,11 @@ class SourceManager:
                         try:
                             from dateutil import parser as dt_parser
                             pub_date = dt_parser.parse(entry.published)
+                            if pub_date.tzinfo is not None:
+                                pub_date = pub_date.astimezone(
+                                    timezone.utc
+                                ).replace(tzinfo=None)
+
                         except Exception:
                             pass
 
@@ -533,6 +558,6 @@ class SourceManager:
                 articles.append(res)
 
         if session and articles:
-            await self._persist_articles(session=session, raw_articles=articles)
+            await self._persist_articles(session=session, raw_articles=articles,query=query)
 
         return articles

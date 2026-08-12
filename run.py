@@ -9,8 +9,7 @@ from engine.synthesizer import NewsSynthesizer
 
 from db.session import init_db, AsyncSessionLocal, engine
 from engine.manager import SourceManager
-from models.orm import ArticleORM
-
+from models.orm import ArticleORM, ClusterORM
 # Setup standard logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,13 +19,16 @@ logging.basicConfig(
 logger = logging.getLogger("PipelineRunner")
 
 
-async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", limit: int = 10):
+async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", limit: int = 10, manager: SourceManager | None = None,):
     logger.info("Initializing SQLite database schemas...")
     await init_db()
 
     logger.info(f"Starting Google News search for query: '{search_query}' (Window: {time_window})")
-    
-    manager = SourceManager()
+
+
+    if manager is None:
+        manager = SourceManager()
+    # manager = SourceManager()
     
     synthesizer = NewsSynthesizer()
 
@@ -98,14 +100,20 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
                                 })
                                 
                                 articles_content.append(art.content_clean or art.content or art.title)
-                            
+
+                            cluster = await session.get(ClusterORM,cluster_id)
                             summary = await synthesizer.synthesize_cluster(articles_content)
+
+                            if cluster:
+                                cluster.summary = summary
+
                             cluster_data["summary"] = summary
+                            await session.commit()
                             print("\n Neutral Summary ")
                             print(summary)
                             print("=" * 60 + "\n")
                             response["clusters"].append(cluster_data)
-                            return response
+            return response
         except Exception as e:
             logger.error(f"Pipeline execution encountered an exception: {e}", exc_info=True)
             await session.rollback()

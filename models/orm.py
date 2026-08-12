@@ -8,6 +8,17 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 
+
+
+class ClusterORM(Base):
+    __tablename__ = "clusters"
+
+    id = Column(Integer, primary_key=True)
+    query = Column(String(255), nullable=True)
+    summary = Column(Text, nullable=True)
+    created_at = Column(DateTime,default=datetime.utcnow,nullable=False)
+    articles = relationship("ArticleORM",back_populates="cluster")
+
 class ArticleORM(Base):
     __tablename__ = "articles"
 
@@ -24,8 +35,10 @@ class ArticleORM(Base):
     organizations = Column(JSON, nullable=True)
     locations = Column(JSON, nullable=True)
     misc = Column(JSON, nullable=True)
-    
-    cluster_id = Column(Integer, nullable=True, index=True)
+
+    cluster_id = Column(Integer,ForeignKey("clusters.id"),nullable=True)
+    cluster = relationship("ClusterORM",back_populates="articles")
+
     reliability_score = Column(Float, nullable=True)
     neutrality_score = Column(Float, nullable=True)
     attribution_score = Column(Float, nullable=True)
@@ -88,8 +101,13 @@ class ArticleFeedbackORM(Base):
 
 class SummaryFeedbackORM(Base):
     __tablename__="summary_feedback"
-    id=Column(Integer,primary_key=True)
-    cluster_id = Column(Integer, nullable=False)
+
+    id = Column(Integer, primary_key=True)
+
+
+
+    cluster_id = Column(Integer,ForeignKey("clusters.id"),nullable=False)
+    cluster = relationship("ClusterORM")
 
     generated_summary = Column(Text, nullable=False)
 
