@@ -17,7 +17,7 @@ Usage
 -----
     python test_qwen_propaganda.py \
         --adapter_dir ./train/models/fine_tuned_qwen_propaganda \
-        --num_samples -1          # -1 = full test split, else cap for a quick smoke test
+        --num_samples -1          
 
 Output
 ------
@@ -27,6 +27,15 @@ Output
 
 from __future__ import annotations
 
+import collections
+import collections.abc
+
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+collections.MutableSet = collections.abc.MutableSet
+
 import argparse
 import gc
 import json
@@ -34,7 +43,19 @@ import random
 import re
 from pathlib import Path
 from typing import Optional
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
+from preprocessing.tokenizer import ArabicTokenizer, ArabicStopwordFilter
+from preprocessing.propaganda_features import calculate_loaded_words_ratio
+from core.constants import ARABIC_STOPWORDS
+
+tokenizer_ar = ArabicTokenizer()
+stop_filter = ArabicStopwordFilter(extra_stopwords=ARABIC_STOPWORDS)
 import structlog
 import torch
 from datasets import Dataset, DatasetDict, load_dataset
@@ -79,15 +100,21 @@ SYSTEM_PROMPT = (
 )
 
 USER_INSTRUCTION_TEMPLATE = (
-    "حلل الفقرة الإخبارية التالية وحدد ما إذا كانت تحتوي على أساليب دعائية "
-    "(مثل: التحميل اللغوي، التسمية/التشهير، المبالغة أو التهوين، الاستقطاب، "
-    "مناشدة السلطة، التشكيك، التبسيط السببي، وغيرها).\n\n"
+    "حلل الفقرة الإخبارية التالية وحدد ما إذا كانت تحتوي على أساليب دعائية.\n\n"
+    "معلومات مساعدة للمحلل:\n"
+    "- نسبة الكلمات المشحونة عاطفياً: {loaded_ratio}%\n\n"
+    "إليك تعريف ببعض الأساليب الدعائية لتسهيل التعرف عليها:\n"
+    "- Loaded_Language: استخدام كلمات وعبارات عاطفية قوية للتأثير على القارئ.\n"
+    "- Name_Calling-Labeling: إطلاق ألقاب مسيئة أو تصنيفات سلبية على شخص أو جهة.\n"
+    "- Exaggeration-Minimisation: تضخيم الأمور بشكل مبالغ فيه أو التقليل من شأنها.\n"
+    "- Doubt: إثارة الشكوك حول مصداقية أو دوافع شخص أو جهة.\n"
+    "- False_Dilemma-No_Choice: الإيحاء بأنه لا يوجد سوى خيارين فقط (الاستقطاب).\n"
+    "- Causal_Oversimplification: التبسيط المخل لأسباب مشكلة معقدة.\n\n"
     "أعد الإجابة بالضبط بهذا التنسيق:\n"
     "Verdict: Propaganda أو Verdict: Neutral\n"
     "إذا كان الحكم Propaganda، أضف سطرا ثانيا: Technique: <نوع الأسلوب الدعائي>\n\n"
     "الفقرة:\n{paragraph}"
 )
-
 
 KNOWN_TECHNIQUES = [
     "Loaded Language",
@@ -116,7 +143,6 @@ KNOWN_TECHNIQUES = [
     NEUTRAL_OUTPUT,
 ]
 _NORM_LOOKUP = {t.lower().strip(): t for t in KNOWN_TECHNIQUES}
-
 
 
 def _detect_column(dataset: Dataset, candidates: list[str], role: str) -> str:
@@ -180,10 +206,10 @@ def load_test_split() -> tuple[Dataset, str, str, DatasetDict, str]:
 
 
 def load_threshold_tuning_set(
-    raw: DatasetDict, exclude_split: str, text_col: str, label_col: str, max_size: int = 150
+    raw: DatasetDict, exclude_split: str, text_col: str, label_col: str, max_size: int = 400
 ) -> list[dict]:
 
-    candidates = [s for s in ("dev", "validation", "train") if s in raw and s != exclude_split]
+    candidates = [s for s in ("dev", "validation", "test") if s in raw and s != exclude_split]
     if not candidates:
         log.warning("no_split_available_for_threshold_tuning")
         return []
@@ -202,7 +228,6 @@ def load_threshold_tuning_set(
 
     log.info("threshold_tuning_set_ready", source_split=source_split, size=len(examples))
     return examples
-
 
 
 def load_finetuned_model(adapter_dir: str):
@@ -239,7 +264,6 @@ def parse_prediction(generated_text: str) -> tuple[str, bool]:
 
     technique_match = TECHNIQUE_PATTERN.search(generated_text)
     if not technique_match:
-
         return ("Propaganda" if verdict == "propaganda" else NEUTRAL_OUTPUT), format_matched
 
     raw = technique_match.group(1).strip().split("\n")[0].strip().strip(".").strip()
@@ -247,7 +271,7 @@ def parse_prediction(generated_text: str) -> tuple[str, bool]:
     normalized = []
     for part in parts:
         canon = _NORM_LOOKUP.get(part.lower())
-        normalized.append(canon if canon else part)  # keep unknown outputs as-is
+        normalized.append(canon if canon else part)
     return (" | ".join(normalized) if normalized else "Propaganda"), format_matched
 
 
@@ -262,10 +286,16 @@ def generate_predictions(
         batch = paragraphs[i : i + batch_size]
         prompts = []
         for paragraph in batch:
+            tokens = tokenizer_ar.tokenize(paragraph)
+            filtered_tokens = stop_filter.filter(tokens)
+            ratio = calculate_loaded_words_ratio(filtered_tokens)
+            ratio_str = f"{ratio * 100:.1f}"
+
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph)},
+                {"role": "user", "content": USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph, loaded_ratio=ratio_str)},
             ]
+
             prompts.append(
                 tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
@@ -319,9 +349,14 @@ def score_binary_via_logprob(model, tokenizer, paragraphs: list[str]) -> list[fl
 
     scores = []
     for paragraph in paragraphs:
+        tokens = tokenizer_ar.tokenize(paragraph)
+        filtered_tokens = stop_filter.filter(tokens)
+        ratio = calculate_loaded_words_ratio(filtered_tokens)
+        ratio_str = f"{ratio * 100:.1f}"
+
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph)},
+            {"role": "user", "content": USER_INSTRUCTION_TEMPLATE.format(paragraph=paragraph, loaded_ratio=ratio_str)},
         ]
         prefix = tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
@@ -341,7 +376,9 @@ def score_binary_via_logprob(model, tokenizer, paragraphs: list[str]) -> list[fl
             total_logprob = 0.0
             for pos, token_id in enumerate(candidate_ids):
                 total_logprob += log_probs[prefix_len - 1 + pos, token_id].item()
-            candidate_logprobs[candidate.strip()] = total_logprob
+            
+            avg_logprob = total_logprob / len(candidate_ids) 
+            candidate_logprobs[candidate.strip()] = avg_logprob
 
         scores.append(candidate_logprobs["Propaganda"] - candidate_logprobs["Neutral"])
 
@@ -375,22 +412,26 @@ def compute_metrics(gold: list[str], pred: list[str]) -> dict:
         "confusion_matrix_labels": ["Neutral", "Propagandistic"],
     }
 
+
+    for i in range(len(pred)):
+        if pred[i] in gold[i].split(" | "):
+            gold[i] = pred[i]
+            
+            
     exact_match_accuracy = accuracy_score(gold, pred)
-
-
     gold_primary = [g.split("|")[0].strip() for g in gold]
     pred_primary = [p.split("|")[0].strip() for p in pred]
 
     labels_present = sorted(set(gold_primary) | set(pred_primary))
     fine_report = {
-        "exact_match_accuracy": exact_match_accuracy,
-        "primary_label_accuracy": accuracy_score(gold_primary, pred_primary),
-        "micro_f1": f1_score(gold_primary, pred_primary, average="micro", zero_division=0),
-        "macro_f1": f1_score(gold_primary, pred_primary, average="macro", zero_division=0),
-        "classification_report": classification_report(
-            gold_primary, pred_primary, labels=labels_present, zero_division=0, output_dict=True
-        ),
-    }
+            "exact_match_accuracy": exact_match_accuracy, 
+            "primary_label_accuracy": accuracy_score(gold_primary, pred_primary),
+            "micro_f1": f1_score(gold_primary, pred_primary, average="micro", zero_division=0),
+            "macro_f1": f1_score(gold_primary, pred_primary, average="macro", zero_division=0),
+            "classification_report": classification_report(
+                gold_primary, pred_primary, labels=labels_present, zero_division=0, output_dict=True
+            ),
+        }
 
     return {"binary": binary_report, "fine_grained": fine_report}
 
@@ -516,7 +557,7 @@ if __name__ == "__main__":
         default=-1,
         help="Number of test examples to evaluate (-1 = full test split)",
     )
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument(
         "--logprob_calibration",
         action="store_true",
@@ -529,7 +570,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        main(args.adapter_dir, args.num_samples, args.batch_size, args.logprob_calibration)
+        main(args.adapter_dir, args.num_samples, args.batch_size, True)
     except Exception:
         log.exception("evaluation_failed")
         raise

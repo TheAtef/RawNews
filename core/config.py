@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # arabert configurations for analysis and clustering
     embedding_model_id: str = "Qwen/Qwen3.5-0.8B"
     sentiment_model_id: str = "./train/models/fine_tuned_arabert_statement_type"
-    multi_sentiment_model_id: str = "./train/train/models/fine_tuned_llm_propaganda_binary"
+    multi_sentiment_model_id: str = "./train/train/models/fine_tuned_qwen_propaganda"
 
     # gemma 2 configuration strictly for summarization
     # gemma_model_id: str = "./train/models/gemma2_arabic_summarizer_adapter"
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     clustering_similarity_threshold: float = 0.78
     
     api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    api_port: int = 8001
     api_workers: int = 4
     cors_origins: List[str] = ["*"]
 

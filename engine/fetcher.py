@@ -93,7 +93,6 @@ class RSSFetcher:
 
         return articles
 
-
 class GoogleNews:
     def __init__(self, query: str, time_window: str = "7d", limit: int = 20, scrape_full_content: bool = True):
         self.cs = cloudscraper.create_scraper()
@@ -109,40 +108,66 @@ class GoogleNews:
         if response.status_code == 200:
             rss = feedparser.parse(response.content)
             logger.info("google_news_fetch_success", query=self.query, total_entries=len(rss.entries))
-            for entry in rss.entries:
-                try:
-                    url = await self.getGoogleRedirectUrl(entry.link)
-                    if any(blocked in url for blocked in settings.blocked_websites):
-                        continue
-                    entry.link = url
-                    articles.append(entry)
-                except Exception:
-                    continue
+            
+            entries_to_process = rss.entries[:self.limit * 2]
+            semaphore = asyncio.Semaphore(5)  
+
+            async def resolve_entry(entry):
+                async with semaphore:
+                    try:
+                        url = await self.getGoogleRedirectUrl(entry.link)
+                        if any(blocked in url for blocked in settings.blocked_websites):
+                            return None
+                        entry.link = url
+                        return entry
+                    except Exception as e:
+                        logger.warning("google_redirect_failed", link=getattr(entry, "link", ""), error=str(e))
+                        return entry 
+
+            tasks = [resolve_entry(e) for e in entries_to_process]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for res in results:
+                if res and not isinstance(res, Exception):
+                    articles.append(res)
                 if len(articles) >= self.limit:
                     break
         return articles
 
     async def getGoogleRedirectUrl(self, rss_url: str) -> str:
-        resp = await asyncio.to_thread(requests.get, rss_url, timeout=10)
-        data = BeautifulSoup(resp.text, 'html.parser').select_one('c-wiz[data-p]').get('data-p')
-        obj = json.loads(data.replace('%.@.', '["garturlreq",'))
+        try:
+            resp = await asyncio.to_thread(requests.get, rss_url, timeout=5)
+            if resp.status_code != 200:
+                return rss_url
+            
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            cwiz = soup.select_one('c-wiz[data-p]')
+            if not cwiz or not cwiz.get('data-p'):
+                return resp.url or rss_url  
+                
+            data = cwiz.get('data-p')
+            obj = json.loads(data.replace('%.@.', '["garturlreq",'))
 
-        payload = {
-            'f.req': json.dumps([[['Fbv4je', json.dumps(obj[:-6] + obj[-2:]), 'null', 'generic']]])
-        }
+            payload = {
+                'f.req': json.dumps([[['Fbv4je', json.dumps(obj[:-6] + obj[-2:]), 'null', 'generic']]])
+            }
 
-        headers = {
-            'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-        }
+            headers = {
+                'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+            }
 
-        url = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
-        response = await asyncio.to_thread(requests.post, url, headers=headers, data=payload, timeout=10)
-        
-        array_string = json.loads(response.text.replace(")]}'", ""))[0][2]
-        article_url = json.loads(array_string)[1]
-
-        return article_url
+            url = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+            response = await asyncio.to_thread(requests.post, url, headers=headers, data=payload, timeout=5)
+            
+            if response.status_code == 200:
+                array_string = json.loads(response.text.replace(")]}'", ""))[0][2]
+                article_url = json.loads(array_string)[1]
+                return article_url
+            return rss_url
+        except Exception as e:
+            logger.warning("get_google_redirect_url_error", url=rss_url, error=str(e))
+            return rss_url
     
 
 

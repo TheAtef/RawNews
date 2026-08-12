@@ -24,24 +24,29 @@ SOURCE_AUTHORITY: Dict[str, float] = {
 
 # preprocessing/analyzer.py
 from train.prompt_utils import build_messages, parse_output
-from transformers import AutoModelForCausalLM # Import CausalLM instead of SequenceClassification
+from transformers import AutoModelForCausalLM 
 
 class AraBERTClassifier:
     def __init__(self) -> None:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
+            
+            device_map = {"": self.device} if torch.cuda.is_available() else None
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 settings.multi_sentiment_model_id,
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto"
+                device_map=device_map
             )
             self.enabled = True
         except Exception as e:
             logger.error("qwen_classifier_init_failed", error=str(e))
             self.enabled = False
+
     def classify_propaganda(self, text: str, title: str, loaded_words_ratio: float) -> str:
         if not self.enabled or not text.strip():
+            logger.warning("classifier_disabled_or_empty_text", enabled=self.enabled)
             return "neutral"
 
         try:
@@ -52,12 +57,13 @@ class AraBERTClassifier:
                 include_answer=False
             )
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=80,
+                    max_new_tokens=30,
                     temperature=0.3,  
                     do_sample=True,   
                     top_p=0.85,       
@@ -67,11 +73,12 @@ class AraBERTClassifier:
             generated_tokens = outputs[0][inputs.input_ids.shape[-1]:]
             decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-            return parse_output(decoded_output)
+            prediction = parse_output(decoded_output)
+            return prediction
 
         except Exception as e:
             logger.error("qwen_inference_error", error=str(e))
-            return "neutral"
+            return "Error"
 class HeuristicScorer:
     def __init__(self, source_registry: Dict[str, float] = None):
         self.source_registry = source_registry if source_registry is not None else SOURCE_AUTHORITY
