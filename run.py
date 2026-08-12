@@ -115,6 +115,6 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
 
 
 if __name__ == "__main__":
-    query_term = "اتفاق مكة"
+    query_term = "ايران وامريكا"
     
     asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=8))
