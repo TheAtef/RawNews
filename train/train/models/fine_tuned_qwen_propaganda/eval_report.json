@@ -1,0 +1,188 @@
+{
+  "binary": {
+    "accuracy": 0.746606334841629,
+    "f1": 0.8060046189376443,
+    "confusion_matrix": [
+      [
+        292,
+        221
+      ],
+      [
+        115,
+        698
+      ]
+    ],
+    "confusion_matrix_labels": [
+      "Neutral",
+      "Propagandistic"
+    ]
+  },
+  "fine_grained": {
+    "exact_match_accuracy": 0.5135746606334841,
+    "primary_label_accuracy": 0.5135746606334841,
+    "micro_f1": 0.5135746606334841,
+    "macro_f1": 0.1241441526887287,
+    "classification_report": {
+      "Appeal_to_Authority": {
+        "precision": 0.07692307692307693,
+        "recall": 0.08333333333333333,
+        "f1-score": 0.08,
+        "support": 12.0
+      },
+      "Appeal_to_Fear-Prejudice": {
+        "precision": 0.07142857142857142,
+        "recall": 0.125,
+        "f1-score": 0.09090909090909091,
+        "support": 8.0
+      },
+      "Appeal_to_Hypocrisy": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 4.0
+      },
+      "Appeal_to_Popularity": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 1.0
+      },
+      "Appeal_to_Values": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 3.0
+      },
+      "Causal_Oversimplification": {
+        "precision": 0.16666666666666666,
+        "recall": 0.06060606060606061,
+        "f1-score": 0.08888888888888889,
+        "support": 33.0
+      },
+      "Consequential_Oversimplification": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 2.0
+      },
+      "Doubt": {
+        "precision": 0.5,
+        "recall": 0.12,
+        "f1-score": 0.1935483870967742,
+        "support": 25.0
+      },
+      "Exaggeration-Minimisation": {
+        "precision": 0.24920127795527156,
+        "recall": 0.6610169491525424,
+        "f1-score": 0.3619489559164733,
+        "support": 118.0
+      },
+      "False_Dilemma-No_Choice": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 2.0
+      },
+      "Flag_Waving": {
+        "precision": 0.5,
+        "recall": 0.15,
+        "f1-score": 0.23076923076923078,
+        "support": 20.0
+      },
+      "Guilt_by_Association": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 2.0
+      },
+      "Loaded_Language": {
+        "precision": 0.6063829787234043,
+        "recall": 0.5601965601965602,
+        "f1-score": 0.5823754789272031,
+        "support": 407.0
+      },
+      "Name_Calling-Labeling": {
+        "precision": 0.4124293785310734,
+        "recall": 0.5407407407407407,
+        "f1-score": 0.46794871794871795,
+        "support": 135.0
+      },
+      "Neutral": {
+        "precision": 0.7174447174447175,
+        "recall": 0.5692007797270955,
+        "f1-score": 0.6347826086956522,
+        "support": 513.0
+      },
+      "Obfuscation-Vagueness-Confusion": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 18.0
+      },
+      "Questioning_the_Reputation": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 6.0
+      },
+      "Red_Herring": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 4.0
+      },
+      "Repetition": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 2.0
+      },
+      "Slogans": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 7.0
+      },
+      "Straw_Man": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 2.0
+      },
+      "Whataboutism": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 2.0
+      },
+      "accuracy": 0.5135746606334841,
+      "macro avg": {
+        "precision": 0.15002166671239914,
+        "recall": 0.13045883744346967,
+        "f1-score": 0.1241441526887287,
+        "support": 1326.0
+      },
+      "weighted avg": {
+        "precision": 0.5500944455388297,
+        "recall": 0.5135746606334841,
+        "f1-score": 0.5148024526839156,
+        "support": 1326.0
+      }
+    }
+  },
+  "binary_logprob_calibrated": {
+    "threshold": 0.5472709735374034,
+    "accuracy": 0.7428355957767723,
+    "f1": 0.7985823981098642,
+    "confusion_matrix": [
+      [
+        309,
+        204
+      ],
+      [
+        137,
+        676
+      ]
+    ]
+  }
+}
