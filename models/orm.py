@@ -89,9 +89,7 @@ class ArticleFeedbackORM(Base):
 class SummaryFeedbackORM(Base):
     __tablename__="summary_feedback"
     id=Column(Integer,primary_key=True)
-    article_id = Column(Integer,ForeignKey("articles.id"),nullable=False)
-
-    article = relationship("ArticleORM")
+    cluster_id = Column(Integer, nullable=False)
 
     generated_summary = Column(Text, nullable=False)
 
@@ -99,9 +97,6 @@ class SummaryFeedbackORM(Base):
     query=Column(String(255),nullable=True)
     user_rating=Column(Boolean,nullable=False)
     feedback_reason=Column(String(100),nullable=True)
-
-    corrected_summary=Column(Text,nullable=True)
-
     created_at=Column(DateTime,default=datetime.utcnow)
     status = Column(
         Enum(FeedbackStatus,values_callable=lambda enum: [e.value for e in enum]),

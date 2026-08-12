@@ -104,15 +104,13 @@ class ArticleFeedbackSchema(BaseModel):
 
 
 class SummaryFeedbackSchemma(BaseModel):
-    article_id: int
+    cluster_id: int
     query: Optional[str] = None
-
     generated_summary: str
     user_rating: bool
     feedback_reason: Optional[str] = None
     corrected_summary: Optional[str] = None
 
-    
 class FeedbackStatusSchema(BaseModel):
     status: FeedbackStatus
     admin_notes: Optional[str] = None
@@ -137,4 +135,44 @@ class ArticleSourcesResponse(BaseModel):
     total: int
     message: Optional[str] = None
     sources: List[ArticleSourceSchema]
+
+
+class ArticleSearchResultSchema(BaseModel):
+    id: int
+    url:str
+
+    title: str
+    source_name: str
+
+    published_at: Optional[datetime] = None
+
+    reliability_score: Optional[float] = None
+    neutrality_score: Optional[float] = None
+
+    verified: bool
+
+    statement_type: Optional[str] = None
+    attribution_label: Optional[str] = None
+    propaganda_label: Optional[str] = None
+
+    cluster_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SearchClusterSchema(BaseModel):
+    cluster_id: int
+
+    summary: Optional[str] = None
+
+    articles: List[ArticleSearchResultSchema]
+
+class SearchResponseSchema(BaseModel):
+    status: str
+
+    query: str
+    time_window: str
+
+    clusters: List[SearchClusterSchema]
 

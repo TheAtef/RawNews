@@ -15,3 +15,5 @@ evaluate==0.4.6
 arabert==1.0.1
 peft==0.19.1
 trl==1.6.0
+asyncpg
+SQLAlchemy==2.0.49

@@ -46,6 +46,8 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
                 return 
 
             logger.info(f"Processed and cached {len(raw_articles)} raw articles successfully.")
+            response = { "query": search_query,"time_window": time_window,"clusters": []}
+
 
             stmt = select(ArticleORM).where(ArticleORM.cluster_id.is_not(None))
             result = await session.execute(stmt)
@@ -58,11 +60,13 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
             logger.info(f"Identified {len(story_clusters)} active story clusters in local database.")
 
             for cluster_id, articles in story_clusters.items():
+                            cluster_data = {"cluster_id": cluster_id, "summary": None,"articles": []}
                             print("\n" + "=" * 60)
                             print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
                             print("=" * 60)
                             
                             articles_content = []
+
                             
                             for idx, art in enumerate(articles, 1):
                                 bias_percentage = round((1.0 - art.neutrality_score) * 100, 1)
@@ -74,13 +78,34 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
                                 print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
                                 print(f"     └─ Reliability Score:        {art.reliability_score}")
                                 print("-" * 50)
+                                cluster_data["articles"].append({
+                                    "id": art.id,
+                                    "title": art.title,
+                                    "url": art.url,
+
+                                    "source_name": art.source_name,
+                                    "published_at": art.published_at,
+
+                                    "reliability_score": art.reliability_score,
+                                    "neutrality_score": art.neutrality_score,
+                                    "verified": art.verified,
+
+                                    "statement_type": art.statement_type,
+                                    "attribution_label": art.attribution_label,
+                                    "propaganda_label": art.propaganda_label,
+
+                                    "cluster_id": art.cluster_id
+                                })
                                 
                                 articles_content.append(art.content_clean or art.content or art.title)
                             
                             summary = await synthesizer.synthesize_cluster(articles_content)
+                            cluster_data["summary"] = summary
                             print("\n Neutral Summary ")
                             print(summary)
                             print("=" * 60 + "\n")
+                            response["clusters"].append(cluster_data)
+                            return response
         except Exception as e:
             logger.error(f"Pipeline execution encountered an exception: {e}", exc_info=True)
             await session.rollback()
