@@ -28,13 +28,16 @@ from transformers import AutoModelForCausalLM
 
 class AraBERTClassifier:
     def __init__(self) -> None:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
+            
+            device_map = {"": self.device} if torch.cuda.is_available() else None
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 settings.multi_sentiment_model_id,
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto"
+                device_map=device_map
             )
             self.enabled = True
         except Exception as e:
@@ -54,12 +57,13 @@ class AraBERTClassifier:
                 include_answer=False
             )
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=80,
+                    max_new_tokens=30,
                     temperature=0.3,  
                     do_sample=True,   
                     top_p=0.85,       
@@ -70,14 +74,6 @@ class AraBERTClassifier:
             decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
             prediction = parse_output(decoded_output)
-
-            print("\n================ [PROPAGANDA MODEL DEBUG] ================")
-            print(f" Title: {title[:60]}...")
-            print(f" Loaded Words Ratio: {loaded_words_ratio * 100:.2f}%")
-            print(f" Raw Model Text Output: '{decoded_output}'")
-            print(f" Final Parsed Label: '{prediction}'")
-            print("=========================================================\n")
-
             return prediction
 
         except Exception as e:

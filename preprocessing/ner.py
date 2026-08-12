@@ -1,8 +1,17 @@
+import torch
 from transformers import pipeline
 class NER:
     def __init__(self):
         model_name = "MostafaAhmed98/AraBert-Arabic-NER-CoNLLpp"
-        self.ner=pipeline("ner",model=model_name,tokenizer=model_name,aggregation_strategy="simple")
+        device = 0 if torch.cuda.is_available() else -1
+        self.ner = pipeline(
+            "ner",
+            model=model_name,
+            tokenizer=model_name,
+            aggregation_strategy="simple",
+            device=device
+        )
+
     def remove_sub_entities(self,items):
         result=[]
         for item in sorted(set(items),key=len,reverse=True):

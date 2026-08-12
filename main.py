@@ -628,6 +628,7 @@ async def search_news(
     query: str = Query(..., description="Search query"),
     time_window: str = Query(default="7d", description="Time window for search relevance"),
     limit: int = Query(default=20, ge=1, description="Maximum number of articles to search"),
+    
     scrape_full_content: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
