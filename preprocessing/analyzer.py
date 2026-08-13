@@ -48,7 +48,6 @@ class AraBERTClassifier:
             self.enabled = False
 
     def classify_propaganda(self, text: str, title: str, loaded_words_ratio: float) -> str:
-        """Single article fallback classification."""
         res = self.classify_propaganda_batch([{
             "text": text,
             "title": title,
@@ -57,7 +56,6 @@ class AraBERTClassifier:
         return res[0] if res else "neutral"
 
     def classify_propaganda_batch(self, items: List[Dict[str, Any]]) -> List[str]:
-        """Classifies multiple articles in a SINGLE batch LLM pass."""
         if not self.enabled or not items:
             return ["neutral"] * len(items)
 
@@ -106,7 +104,6 @@ class AraBERTClassifier:
                 results.append(parse_output(decoded_output))
 
             return results
-
         except Exception as e:
             logger.error("qwen_batch_inference_error", error=str(e))
             return ["Error"] * len(items)
@@ -161,7 +158,7 @@ class HeuristicScorer:
     ) -> Dict[str, float]:
         s_auth = self.calculate_source_authority(source_name)
         s_neut = self.calculate_neutrality_score(tokens)
-        s_attr = self.calculate_attribution_score(raw_text, title=title) # Pass title down
+        s_attr = self.calculate_attribution_score(raw_text, title=title)
 
         composite = (0.35 * s_auth) + (0.35 * s_neut) + (0.15 * s_attr) + (0.15 * consensus_score)
         return {
