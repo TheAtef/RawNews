@@ -46,7 +46,7 @@ from core.config import settings
 from db.session import get_db, init_db
 from engine.manager import SourceManager
 
-from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus
+from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus,ClusterORM
 from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema,ArticleDetailsSchema,ArticleCardSchema,ArticleListResponse,ArticleSourceSchema,ArticleSourcesResponse,SearchResponseSchema
 from utils.logging import configure_logging
 from services.training_service import start_retraining_if_needed
@@ -711,9 +711,15 @@ async def save_summary_feedback(
     feedback:SummaryFeedbackSchemma,
     db:AsyncSession=Depends(get_db)
 ):
+    cluster = await db.get(ClusterORM,feedback.cluster_id)
+    if cluster is None:
+        raise HTTPException(
+            status_code=404,
+            detail="cluster not found"
+        )
     
     item = SummaryFeedbackORM(
-        cluster_id=feedback.cluster_id,
+        cluster_id=cluster.id,
         query=feedback.query,
         user_rating=feedback.user_rating,
         feedback_reason=feedback.feedback_reason,

@@ -4,20 +4,24 @@ import asyncio
 import sys
 import os
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.session import AsyncSessionLocal
-from models.orm import ArticleORM,SummaryFeedbackORM,FeedbackStatus
+from models.orm import ClusterORM, SummaryFeedbackORM, FeedbackStatus
 async def export_summary_feedback_dataset():
     print("exporting summary feedback started")
     async with AsyncSessionLocal() as session:
-        stmt=(select(ArticleORM,SummaryFeedbackORM)
-              .join(SummaryFeedbackORM,ArticleORM.id==SummaryFeedbackORM.article_id)
-              .where(SummaryFeedbackORM.status==FeedbackStatus.APPROVED))
+        stmt = (
+            select(ClusterORM, SummaryFeedbackORM)
+            .options(selectinload(ClusterORM.articles))
+            .join(SummaryFeedbackORM,ClusterORM.id == SummaryFeedbackORM.cluster_id)
+            .where(SummaryFeedbackORM.status == FeedbackStatus.APPROVED)
+            )
         result=await session.execute(stmt)
         rows=result.all()
         print(f"exporting {len(rows)} summary feedbacks")
         exported_rows=[]
-        for article,feedback in rows:
+        for cluster,feedback in rows:
             summary = (
                 feedback.corrected_summary
                 if (
@@ -26,8 +30,16 @@ async def export_summary_feedback_dataset():
                 )
                 else feedback.generated_summary
             )
+            article_text = "\n\n".join(
+                            article.content_clean or article.content or article.title
+                            for article in cluster.articles
+                        )
+
+            if not article_text.strip() or not summary.strip():
+                continue
+        
             record = {
-                "article": article.content or "",
+                "article": article_text,
                 "summary": summary,
             }
 

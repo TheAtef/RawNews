@@ -108,7 +108,9 @@ class SummaryFeedbackORM(Base):
 
     cluster_id = Column(Integer,ForeignKey("clusters.id"),nullable=False)
     cluster = relationship("ClusterORM")
-
+    training_job_id = Column(Integer,ForeignKey("summary_training_job.id"),nullable=True)
+    training_job = relationship("SummaryTrainingJobORM",back_populates="feedbacks")
+    
     generated_summary = Column(Text, nullable=False)
 
     corrected_summary = Column(Text, nullable=True)
@@ -122,6 +124,7 @@ class SummaryFeedbackORM(Base):
         nullable=False
     )
     admin_notes = Column(Text, nullable=True)
+
 class TrainingJobORM(Base):
     __tablename__="training_job"
     id=Column(Integer,primary_key=True)
@@ -139,3 +142,31 @@ class TrainingJobORM(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     error_message = Column(Text, nullable=True)
     feedbacks = relationship("ArticleFeedbackORM", back_populates="training_job")
+
+
+
+class SummaryTrainingJobORM(Base):
+    __tablename__ = "summary_training_job"
+
+    id = Column(Integer, primary_key=True)
+
+    feedback_count = Column(Integer, nullable=False)
+    status = Column(
+        Enum("PENDING","RUNNING","COMPLETED","FAILED",name="summary_training_job_status"),
+        default="PENDING",
+        nullable=False
+    )
+
+    train_loss = Column(Float, nullable=True)
+    eval_loss = Column(Float, nullable=True)
+
+    model_path = Column(String(500),nullable=True)
+    is_active = Column(Boolean,default=False,nullable=False)
+    started_at = Column(DateTime(timezone=True),nullable=True)
+    finished_at = Column(DateTime(timezone=True),nullable=True)
+    created_at = Column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc),nullable=False)
+    error_message = Column(Text,nullable=True)
+    feedbacks = relationship(
+        "SummaryFeedbackORM",
+        back_populates="training_job"
+    )
