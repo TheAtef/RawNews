@@ -19,23 +19,28 @@ logging.basicConfig(
 logger = logging.getLogger("PipelineRunner")
 
 
-async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", limit: int = 10, manager: SourceManager | None = None,):
+async def run_intelligence_pipeline(
+    search_query: str, 
+    time_window: str = "3d", 
+    limit: int = 10, 
+    manager: SourceManager | None = None,
+    synthesizer: NewsSynthesizer | None = None
+):
     logger.info("Initializing SQLite database schemas...")
     await init_db()
 
     logger.info(f"Starting Google News search for query: '{search_query}' (Window: {time_window})")
 
-
     if manager is None:
         manager = SourceManager()
-    # manager = SourceManager()
-    
-    synthesizer = NewsSynthesizer()
+        
+    if synthesizer is None:
+        synthesizer = NewsSynthesizer()
 
     async with AsyncSessionLocal() as session:
         try:
             logger.info("Fetching and processing articles through the pipeline...")
-            raw_articles = await manager.search_google_news(
+            persisted_articles = await manager.search_google_news(
                 query=search_query,
                 time_window=time_window,
                 limit=limit,
@@ -43,84 +48,79 @@ async def run_intelligence_pipeline(search_query: str, time_window: str = "3d", 
                 session=session
             )
 
-            if not raw_articles:
+            if not persisted_articles:
                 logger.warning("No new articles met the criteria or were retrieved.")
                 return 
 
-            logger.info(f"Processed and cached {len(raw_articles)} raw articles successfully.")
-            response = { "query": search_query,"time_window": time_window,"clusters": []}
-
-
-            stmt = select(ArticleORM).where(ArticleORM.cluster_id.is_not(None))
-            result = await session.execute(stmt)
-            persisted_articles = result.scalars().all()
+            logger.info(f"Processed and cached {len(persisted_articles)} articles successfully.")
+            response = {"query": search_query, "time_window": time_window, "clusters": []}
 
             story_clusters = defaultdict(list)
             for article in persisted_articles:
-                story_clusters[article.cluster_id].append(article)
+                if getattr(article, "cluster_id", None):
+                    story_clusters[article.cluster_id].append(article)
 
-            logger.info(f"Identified {len(story_clusters)} active story clusters in local database.")
+            logger.info(f"Identified {len(story_clusters)} active story clusters for this search.")
 
             for cluster_id, articles in story_clusters.items():
-                            cluster_data = {"cluster_id": cluster_id, "summary": None,"articles": []}
-                            print("\n" + "=" * 60)
-                            print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
-                            print("=" * 60)
-                            
-                            articles_content = []
+                cluster_data = {"cluster_id": cluster_id, "summary": None, "articles": []}
+                print("\n" + "=" * 60)
+                print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
+                print("=" * 60)
+                
+                articles_content = []
+                
+                for idx, art in enumerate(articles, 1):
+                    bias_percentage = round((1.0 - art.neutrality_score) * 100, 1)
 
-                            
-                            for idx, art in enumerate(articles, 1):
-                                bias_percentage = round((1.0 - art.neutrality_score) * 100, 1)
+                    print(f"  {idx}. [{art.source_name}] {art.title}")
+                    print(f"     └─ Heuristic Statement Type: {art.statement_type}")
+                    print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
+                    print(f"     └─ Qwen Propaganda:          {art.propaganda_label}") 
+                    print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
+                    print(f"     └─ Reliability Score:        {art.reliability_score}")
+                    print("-" * 50)
+                    
+                    cluster_data["articles"].append({
+                        "id": art.id,
+                        "title": art.title,
+                        "url": art.url,
+                        "source_name": art.source_name,
+                        "published_at": art.published_at,
+                        "reliability_score": art.reliability_score,
+                        "neutrality_score": art.neutrality_score,
+                        "verified": art.verified,
+                        "statement_type": art.statement_type,
+                        "attribution_label": art.attribution_label,
+                        "propaganda_label": art.propaganda_label,
+                        "cluster_id": art.cluster_id
+                    })
+                    
+                    articles_content.append(art.content_clean or art.content or art.title)
 
-                                print(f"  {idx}. [{art.source_name}] {art.title}")
-                                print(f"     └─ Heuristic Statement Type: {art.statement_type}")
-                                print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
-                                print(f"     └─ Qwen Propaganda:          {art.propaganda_label}") 
-                                print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
-                                print(f"     └─ Reliability Score:        {art.reliability_score}")
-                                print("-" * 50)
-                                cluster_data["articles"].append({
-                                    "id": art.id,
-                                    "title": art.title,
-                                    "url": art.url,
+                cluster = await session.get(ClusterORM, cluster_id)
+                summary = await synthesizer.synthesize_cluster(articles_content)
 
-                                    "source_name": art.source_name,
-                                    "published_at": art.published_at,
+                if cluster:
+                    cluster.summary = summary
 
-                                    "reliability_score": art.reliability_score,
-                                    "neutrality_score": art.neutrality_score,
-                                    "verified": art.verified,
-
-                                    "statement_type": art.statement_type,
-                                    "attribution_label": art.attribution_label,
-                                    "propaganda_label": art.propaganda_label,
-
-                                    "cluster_id": art.cluster_id
-                                })
-                                
-                                articles_content.append(art.content_clean or art.content or art.title)
-
-                            cluster = await session.get(ClusterORM,cluster_id)
-                            summary = await synthesizer.synthesize_cluster(articles_content)
-
-                            if cluster:
-                                cluster.summary = summary
-
-                            cluster_data["summary"] = summary
-                            await session.commit()
-                            print("\n Neutral Summary ")
-                            print(summary)
-                            print("=" * 60 + "\n")
-                            response["clusters"].append(cluster_data)
+                cluster_data["summary"] = summary
+                await session.commit()
+                
+                print("\n Neutral Summary ")
+                print(summary)
+                print("=" * 60 + "\n")
+                
+                response["clusters"].append(cluster_data)
+                
             return response
+            
         except Exception as e:
             logger.error(f"Pipeline execution encountered an exception: {e}", exc_info=True)
             await session.rollback()
         finally:
             await session.close()
             await engine.dispose()
-
 
 if __name__ == "__main__":
     query_term = "ايران وامريكا"

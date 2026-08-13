@@ -530,7 +530,7 @@ class SourceManager:
         limit: int = 10, 
         scrape_full_content: bool = True,
         session: Optional[AsyncSession] = None
-    ) -> List[RawArticle]:
+    ) -> List[Any]:
         google_news = GoogleNews(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
         entries = await google_news.fetch_news()
         scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
@@ -586,6 +586,6 @@ class SourceManager:
                 articles.append(res)
 
         if session and articles:
-            await self._persist_articles(session=session, raw_articles=articles,query=query)
-
+            persisted_articles = await self._persist_articles(session=session, raw_articles=articles, query=query)
+            return persisted_articles 
         return articles
