@@ -274,6 +274,8 @@ class SourceManager:
             art_text = art.title_clean + " " + (art.content_clean[:400] if art.content_clean else "")
             embedding_cache[art.id] = self._grouper.get_normalized_embedding(art_text)
 
+
+        valid_items = []
         for url, raw in unique_raw_map.items():
             if url in existing_urls:
                 continue
@@ -297,7 +299,47 @@ class SourceManager:
 
             existing_urls.add(url)
 
-            entities = self._ner.extract_entities(cleaned_content[:800])
+            tokens = self._tokenizer.tokenize(normalized_content)
+            filtered_tokens = self._stop_filter.filter(tokens)
+
+            from preprocessing.propaganda_features import calculate_loaded_words_ratio
+            loaded_words_ratio = calculate_loaded_words_ratio(filtered_tokens)
+
+            valid_items.append({
+                "raw": raw,
+                "content_to_use": content_to_use,
+                "normalized_title": normalized_title,
+                "normalized_content": normalized_content,
+                "cleaned_content": cleaned_content,
+                "filtered_tokens": filtered_tokens,
+                "loaded_words_ratio": loaded_words_ratio,
+            })
+
+        if not valid_items:
+            return []
+        ner_texts = [item["cleaned_content"][:800] for item in valid_items]
+        batch_entities = self._ner.extract_entities_batch(ner_texts)
+
+        qwen_input_items = [
+            {
+                "title": item["raw"].title,
+                "text": item["normalized_content"][:800],
+                "loaded_words_ratio": item["loaded_words_ratio"]
+            }
+            for item in valid_items
+        ]
+        batch_propaganda = self._classifier.classify_propaganda_batch(qwen_input_items)
+
+        for idx, item in enumerate(valid_items):
+            raw = item["raw"]
+            content_to_use = item["content_to_use"]
+            normalized_title = item["normalized_title"]
+            normalized_content = item["normalized_content"]
+            filtered_tokens = item["filtered_tokens"]
+
+            entities = batch_entities[idx]
+            predicted_propaganda = batch_propaganda[idx]
+
             new_persons = set(entities.get("person", []))
             new_locations = set(entities.get("location", []))
             new_orgs = set(entities.get("organization", []))
@@ -401,20 +443,6 @@ class SourceManager:
                 assigned_cluster_id = new_cluster.id
                 existing_clusters[assigned_cluster_id] = new_cluster
 ###########################################################################33
-
-
-
-            tokens = self._tokenizer.tokenize(normalized_content)
-            filtered_tokens = self._stop_filter.filter(tokens)
-
-            from preprocessing.propaganda_features import calculate_loaded_words_ratio
-            loaded_words_ratio = calculate_loaded_words_ratio(filtered_tokens)
-
-            predicted_propaganda = self._classifier.classify_propaganda(
-                normalized_content[:800], 
-                raw.title, 
-                loaded_words_ratio=loaded_words_ratio
-            )
 
             scores = self._scorer.evaluate_article(
                 source_name=raw.source_name,

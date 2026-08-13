@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     clustering_similarity_threshold: float = 0.78
     
     api_host: str = "0.0.0.0"
-    api_port: int = 8001
+    api_port: int = 8000
     api_workers: int = 4
     cors_origins: List[str] = ["*"]
 

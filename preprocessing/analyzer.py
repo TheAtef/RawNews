@@ -3,7 +3,7 @@ import re
 import torch
 import numpy as np
 import structlog
-from typing import List, Dict, Set, Optional
+from typing import Any, List, Dict, Set, Optional
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
 from core.config import settings
 from preprocessing.propaganda_features import (LOADED_PHRASES, calculate_loaded_words_ratio)
@@ -31,12 +31,16 @@ class AraBERTClassifier:
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
             
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            
             device_map = {"": self.device} if torch.cuda.is_available() else None
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 settings.multi_sentiment_model_id,
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map=device_map
+                device_map=device_map,
+                attn_implementation="sdpa" if torch.cuda.is_available() else None
             )
             self.enabled = True
         except Exception as e:
@@ -44,39 +48,68 @@ class AraBERTClassifier:
             self.enabled = False
 
     def classify_propaganda(self, text: str, title: str, loaded_words_ratio: float) -> str:
-        if not self.enabled or not text.strip():
-            logger.warning("classifier_disabled_or_empty_text", enabled=self.enabled)
-            return "neutral"
+        """Single article fallback classification."""
+        res = self.classify_propaganda_batch([{
+            "text": text,
+            "title": title,
+            "loaded_words_ratio": loaded_words_ratio
+        }])
+        return res[0] if res else "neutral"
+
+    def classify_propaganda_batch(self, items: List[Dict[str, Any]]) -> List[str]:
+        """Classifies multiple articles in a SINGLE batch LLM pass."""
+        if not self.enabled or not items:
+            return ["neutral"] * len(items)
 
         try:
-            messages = build_messages(
-                title=title,
-                content=text,
-                loaded_words_ratio=loaded_words_ratio,
-                include_answer=False
-            )
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            prompts = []
+            for item in items:
+                messages = build_messages(
+                    title=item.get("title", ""),
+                    content=item.get("text", "")[:800],
+                    loaded_words_ratio=item.get("loaded_words_ratio", 0.0),
+                    include_answer=False
+                )
+                prompts.append(
+                    self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
+                    )
+                )
+
+            prev_padding_side = self.tokenizer.padding_side
+            self.tokenizer.padding_side = "left"
+
+            inputs = self.tokenizer(
+                prompts, 
+                return_tensors="pt", 
+                padding=True, 
+                truncation=True, 
+                max_length=1024
+            ).to(self.model.device)
 
             with torch.no_grad():
                 outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=25,
-                        do_sample=False,        
-                        temperature=None,      
-                        top_p=None,           
-                        eos_token_id=self.tokenizer.eos_token_id
-                                )
-            generated_tokens = outputs[0][inputs.input_ids.shape[-1]:]
-            decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    **inputs,
+                    max_new_tokens=20,
+                    do_sample=False, 
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
 
-            prediction = parse_output(decoded_output)
-            return prediction
+            self.tokenizer.padding_side = prev_padding_side
+
+            results = []
+            input_len = inputs.input_ids.shape[1]
+            for idx in range(len(items)):
+                generated_tokens = outputs[idx][input_len:]
+                decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                results.append(parse_output(decoded_output))
+
+            return results
 
         except Exception as e:
-            logger.error("qwen_inference_error", error=str(e))
-            return "Error"
+            logger.error("qwen_batch_inference_error", error=str(e))
+            return ["Error"] * len(items)
 class HeuristicScorer:
     def __init__(self, source_registry: Dict[str, float] = None):
         self.source_registry = source_registry if source_registry is not None else SOURCE_AUTHORITY
