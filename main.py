@@ -914,6 +914,13 @@ async def get_cluster(
                 "title": article.title,
                 "url": article.url,
                 "source_name": article.source_name,
+                "reliability_score": article.reliability_score,
+                "neutrality_score": article.neutrality_score,
+                "attribution_score":article.attribution_score,
+                "verified": article.verified,
+                "statement_type": article.statement_type,     
+                "attribution_label": article.attribution_label,
+                "propaganda_label": article.propaganda_label, 
                 "published_at": article.published_at,
             }
             for article in cluster.articles
