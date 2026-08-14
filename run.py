@@ -1,4 +1,3 @@
-# run_pipeline.py
 from __future__ import annotations
 import asyncio
 import logging
@@ -6,11 +5,9 @@ import sys
 from collections import defaultdict
 from sqlalchemy import select
 from engine.synthesizer import NewsSynthesizer
-
-from db.session import init_db, AsyncSessionLocal, engine
+from db.session import init_db, AsyncSessionLocal
 from engine.manager import SourceManager
 from models.orm import ArticleORM, ClusterORM
-# Setup standard logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -67,12 +64,9 @@ async def run_intelligence_pipeline(
                 print("\n" + "=" * 60)
                 print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
                 print("=" * 60)
-                
-                articles_content = []
-                
-                for idx, art in enumerate(articles, 1):
-                    bias_percentage = round((1.0 - art.neutrality_score) * 100, 1)
 
+                for idx, art in enumerate(articles, 1):
+                    bias_percentage = round((1.0 - (art.neutrality_score or 0.0)) * 100, 1)
                     print(f"  {idx}. [{art.source_name}] {art.title}")
                     print(f"     └─ Heuristic Statement Type: {art.statement_type}")
                     print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
@@ -80,33 +74,10 @@ async def run_intelligence_pipeline(
                     print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
                     print(f"     └─ Reliability Score:        {art.reliability_score}")
                     print("-" * 50)
-                    
-                    cluster_data["articles"].append({
-                        "id": art.id,
-                        "title": art.title,
-                        "url": art.url,
-                        "source_name": art.source_name,
-                        "published_at": art.published_at,
-                        "reliability_score": art.reliability_score,
-                        "neutrality_score": art.neutrality_score,
-                        "verified": art.verified,
-                        "statement_type": art.statement_type,
-                        "attribution_label": art.attribution_label,
-                        "propaganda_label": art.propaganda_label,
-                        "cluster_id": art.cluster_id
-                    })
-                    
-                    articles_content.append(art.content_clean or art.content or art.title)
 
-                cluster = await session.get(ClusterORM, cluster_id)
+                articles_content = [art.content_clean or art.content or art.title for art in articles]
                 summary = await synthesizer.synthesize_cluster(articles_content)
-
-                if cluster:
-                    cluster.summary = summary
-
                 cluster_data["summary"] = summary
-                await session.commit()
-                
                 print("\n Neutral Summary ")
                 print(summary)
                 print("=" * 60 + "\n")
@@ -120,9 +91,7 @@ async def run_intelligence_pipeline(
             await session.rollback()
         finally:
             await session.close()
-            await engine.dispose()
 
 if __name__ == "__main__":
-    query_term = "ايران وامريكا"
-    
-    asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="3d", limit=10))
+    query_term = "اتفاق مكة"
+    asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=10))
