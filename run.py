@@ -123,6 +123,6 @@ async def run_intelligence_pipeline(
             await engine.dispose()
 
 if __name__ == "__main__":
-    query_term = "سوريا"
+    query_term = "اتفاق مكة"
     
     asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=30))
