@@ -24,24 +24,28 @@ SOURCE_AUTHORITY: Dict[str, float] = {
 
 from train.prompt_utils import build_messages, parse_output
 from transformers import AutoModelForCausalLM 
+from peft import PeftModel
 
 class AraBERTClassifier:
     def __init__(self) -> None:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         # self.device="cpu"
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
-            
+            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-0.8B")
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             
             device_map = {"": self.device} if torch.cuda.is_available() else None
 
-            self.model = AutoModelForCausalLM.from_pretrained(
-                settings.multi_sentiment_model_id,
+            base_model = AutoModelForCausalLM.from_pretrained(
+                "Qwen/Qwen3.5-0.8B",
                 torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
                 device_map=device_map,
                 attn_implementation="sdpa" if torch.cuda.is_available() else None
+            )
+            self.model = PeftModel.from_pretrained(
+                base_model, 
+                settings.multi_sentiment_model_id
             )
             self.enabled = True
         except Exception as e:
@@ -83,7 +87,7 @@ class AraBERTClassifier:
                 return_tensors="pt", 
                 padding=True, 
                 truncation=True, 
-                max_length=1024
+                max_length=1024 
             ).to(self.model.device)
 
             with torch.no_grad():

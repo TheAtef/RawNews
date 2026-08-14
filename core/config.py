@@ -11,7 +11,7 @@ class NewsSourceConfig(BaseModel):
     reliability_score: float = Field(ge=0.0, le=1.0)
     political_lean: str = "unknown"  
     region: str = "unknown"
-
+    use_local_gemma_pipeline: bool = False
     class Config:
         frozen = True
 

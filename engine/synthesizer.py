@@ -7,11 +7,11 @@ import torch
 import gc
 import structlog
 from typing import List
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from peft import PeftModel
 from core.config import settings
 
 logger = structlog.get_logger(__name__)
-
 
 class NewsSynthesizer:
     def __init__(self) -> None:
@@ -27,14 +27,26 @@ class NewsSynthesizer:
 
             if self.tokenizer is None or self.model is None:
                 logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
-                self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
                 
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    settings.gemma_model_id,
-                    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                    device_map="cuda" if torch.cuda.is_available() else "cpu",
-                    attn_implementation="sdpa" if torch.cuda.is_available() else None
+                self.tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-1b-it")
+                
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
                 )
+
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    "google/gemma-3-1b-it",
+                    quantization_config=quantization_config,
+                    device_map="cuda"
+                )
+                
+                self.model = PeftModel.from_pretrained(
+                    base_model, 
+                    settings.gemma_model_id
+                )
+                
                 self.is_enabled = True
         except Exception as e:
             logger.error("summarizer_init_failed", error=str(e))
@@ -42,18 +54,20 @@ class NewsSynthesizer:
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
         for idx, text in enumerate(articles_content):
-            trimmed_text = text.strip()[:1200]
+            trimmed_text = text.strip()[:1000]
             if trimmed_text:
                 combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
 
         joined_articles = "\n\n".join(combined_texts)
-
         prompt = (
             "<start_of_turn>user\n"
-            "أنت محرر صحفي محايد. قم بكتابة تقرير إخباري مفصل وشامل يغطي 3 جوانب رئيسية بناءً على المصادر المعطاة:\n\n"
+            "أنت محرر صحفي محايد وصارم. مهمتك كتابة تقرير إخباري بناءً على المصادر المعطاة فقط.\n"
+            "تحذير هام جداً: يُمنع منعاً باتاً اختراع أو إضافة أي أسماء، دول، أو أحداث غير مذكورة صراحة في النص. "
+            "إذا لم تجد معلومات كافية لأي نقطة، اكتب فقط 'لا تتوفر تفاصيل كافية'.\n\n"
+            "قم بتغطية الجوانب الثلاثة التالية بناءً على النص فقط:\n"
             "1. تفاصيل الحدث الرئيسي والتطورات الأساسية المذكورة في المصادر.\n"
-            "2. مواقف وتصريحات وردود أفعال كافة الأطراف والجهات المعنية.\n"
-            "3. التحليلات والتقارير الصحفية المتعلقة بالنواحي الخلافية والتبعات المستقبلية.\n\n"
+            "2. مواقف وتصريحات وردود أفعال كافة الأطراف والجهات المعنية المذكورة.\n"
+            "3. التحليلات والتقارير الصحفية المتعلقة بالنواحي الخلافية المذكورة في النص.\n\n"
             f"المصادر الإخبارية:\n{joined_articles}\n"
             "<end_of_turn>\n"
             "<start_of_turn>model\n"
@@ -83,10 +97,9 @@ class NewsSynthesizer:
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=500,
-                        temperature=0.3,
+                        max_new_tokens=400,
+                        do_sample=False,
                         repetition_penalty=1.15,
-                        do_sample=True,
                         pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
                     )
 

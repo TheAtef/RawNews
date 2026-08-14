@@ -129,7 +129,7 @@ class SourceManager:
         self._grouper = StoryGrouper()
         
         self._ner = None
-        self._deduplicator = ArticleDeduplicator(similarity_threshold=0.70)
+        self._deduplicator = ArticleDeduplicator(similarity_threshold=0.85)
         self._warmed_up = False
 
     async def _warm_up_processors(self, session: AsyncSession) -> None:
