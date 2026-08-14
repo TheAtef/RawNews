@@ -19,6 +19,8 @@ import collections
 import collections.abc
 from unittest import result
 
+from engine.synthesizer import NewsSynthesizer
+
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
 collections.Sequence = collections.abc.Sequence
@@ -58,7 +60,7 @@ logger = structlog.get_logger(__name__)
 
 
 source_manager = SourceManager()
-
+news_synthesizer = NewsSynthesizer() 
 # _background_fetch_running = False
 
 
@@ -299,7 +301,8 @@ async def search_news(
     result = await run_intelligence_pipeline(
         search_query=query,
         time_window=time_window,
-        limit=limit,manager=source_manager
+        limit=limit,manager=source_manager,
+        synthesizer=news_synthesizer
     )
 
     if result is None:
