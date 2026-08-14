@@ -12,7 +12,7 @@ from models.orm import  ArticleFeedbackORM, ArticleORM, TrainingJobORM,FeedbackS
 from train.export_feedback import export_feedback_dataset
 from train.merge_dataset import merge
 from train.train_classifier import run_classifier_training
-TRAINING_FEEDBACK_THREESHOLD=500
+TRAINING_FEEDBACK_THREESHOLD=1
 async def count_unused_approved_feedbacks()->int:
     async with AsyncSessionLocal() as session:
         stmt=(select(func.count(ArticleFeedbackORM.id))
@@ -65,7 +65,8 @@ async def get_active_training_job(session:AsyncSession)->TrainingJobORM|None:
 def is_new_model_better(active_job,metrics:dict)->bool:
     if active_job is None:
         return True
-    return (metrics["propaganda_f1"] >= active_job.propaganda_f1 and metrics["accuracy"] >= active_job.accuracy )
+    return metrics["propaganda_f1"] >= active_job.propaganda_f1
+    # return (metrics["propaganda_f1"] >= active_job.propaganda_f1 and metrics["accuracy"] >= active_job.accuracy )
 
 
 async def rollback_training_job(session: AsyncSession,training_job_id: int,):
@@ -93,13 +94,13 @@ async def run_training_pipeline(job_id: int):
             print("Merge dataset...")
             merge()
             print("Train model...")
-            metrics = run_classifier_training(task_name="multitask",train_path="train/merged_dataset.jsonl")
-            training_job.accuracy = metrics["accuracy"]
-            training_job.statement_accuracy = metrics["statement_accuracy"]
-            training_job.propaganda_accuracy = metrics["propaganda_accuracy"]
+            metrics = run_classifier_training(task_name="propaganda_binary",train_path="train/merged_dataset.jsonl")
+            # training_job.accuracy = metrics["accuracy"]
+            # training_job.statement_accuracy = metrics["statement_accuracy"]
+            # training_job.propaganda_accuracy = metrics["propaganda_accuracy"]
             training_job.propaganda_f1 = metrics["propaganda_f1"]
-            training_job.parse_failure_rate = metrics["parse_failure_rate"]
-            training_job.attribution_accuracy = metrics["attribution_accuracy"]
+            # training_job.parse_failure_rate = metrics["parse_failure_rate"]
+            # training_job.attribution_accuracy = metrics["attribution_accuracy"]
             training_job.model_path = metrics["model_path"]      
             training_job.status = "COMPLETED"
 

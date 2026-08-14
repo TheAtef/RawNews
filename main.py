@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text,or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from fastapi import BackgroundTasks
 from services.background_fetch import (background_fetch_loop,stop_background_fetch,)
@@ -50,6 +51,7 @@ from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,Feedback
 from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema,ArticleDetailsSchema,ArticleCardSchema,ArticleListResponse,ArticleSourceSchema,ArticleSourcesResponse,SearchResponseSchema
 from utils.logging import configure_logging
 from services.training_service import start_retraining_if_needed
+from services.summary_training_service import start_summary_retraining_if_needed
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
 
@@ -774,6 +776,7 @@ async def article_feedback_status(
 async def summary_feedback_status(
     feedback_id: int,
     status: FeedbackStatusSchema,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
@@ -794,6 +797,10 @@ async def summary_feedback_status(
 
     await db.commit()
     await db.refresh(feedback)
+
+    if feedback.status == FeedbackStatus.APPROVED:
+        background_tasks.add_task(start_summary_retraining_if_needed)
+    
 
     return {
         "message": "Feedback updated successfully",
@@ -873,6 +880,41 @@ async def get_feedback_details(
                 "notes": feedback.notes,
             }
         }
+    }
+
+
+@app.get("/clusters/{cluster_id}")
+async def get_cluster(
+    cluster_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(ClusterORM)
+        .options(selectinload(ClusterORM.articles))
+        .where(ClusterORM.id == cluster_id)
+    )
+
+    cluster = result.scalar_one_or_none()
+
+    if cluster is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Cluster not found"
+        )
+
+    return {
+        "cluster_id": cluster.id,
+        "summary": cluster.summary,
+        "articles": [
+            {
+                "id": article.id,
+                "title": article.title,
+                "url": article.url,
+                "source_name": article.source_name,
+                "published_at": article.published_at,
+            }
+            for article in cluster.articles
+        ]
     }
 
 if __name__ == "__main__":
