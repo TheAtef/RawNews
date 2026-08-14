@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     database_url: str 
     # database_path: str = "./arabic_news.db"
 
-    fetch_timeout_seconds: int = 15
+    fetch_timeout_seconds: int = 7
     max_articles_per_source: int = 50
     article_max_age_hours: int = 48
     fetch_concurrency: int = 8
