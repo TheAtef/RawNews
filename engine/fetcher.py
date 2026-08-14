@@ -110,7 +110,7 @@ class GoogleNews:
             logger.info("google_news_fetch_success", query=self.query, total_entries=len(rss.entries))
             
             entries_to_process = rss.entries[:self.limit]
-            semaphore = asyncio.Semaphore(15)  
+            semaphore = asyncio.Semaphore(20)  
 
             async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as http_client:
                 async def resolve_entry(entry):

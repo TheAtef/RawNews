@@ -42,7 +42,7 @@ class NewsSynthesizer:
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
         for idx, text in enumerate(articles_content):
-            trimmed_text = text.strip()[:1000]
+            trimmed_text = text.strip()[:1200]
             if trimmed_text:
                 combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
 

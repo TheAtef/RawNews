@@ -170,9 +170,8 @@ class HeuristicScorer:
 class StoryGrouper:
     def __init__(self) -> None:
         self.device = "cuda" if settings.device == "cuda" and torch.cuda.is_available() else "cpu"
-        fast_model = "aubmindlab/bert-base-arabertv02"
-        self.tokenizer = AutoTokenizer.from_pretrained(fast_model)
-        self.model = AutoModel.from_pretrained(fast_model).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_id)
+        self.model = AutoModel.from_pretrained(settings.embedding_model_id).to(self.device)
         self.model.eval()
         self.running_mean = np.zeros(768, dtype=np.float32)
         self.total_processed = 0

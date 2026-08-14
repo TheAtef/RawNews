@@ -293,10 +293,9 @@ class SourceManager:
             cleaned_content = self._cleaner.clean(content_to_use)
             normalized_content = self._normalizer.normalize(cleaned_content)
             
-            if len(normalized_content) > 150:
-                            is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
-                            if is_dup:
-                                continue
+            is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
+            if is_dup:
+                continue
 
             existing_urls.add(url)
 
