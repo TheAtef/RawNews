@@ -17,7 +17,9 @@ import sys
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
 import torch
+
 torch.cuda.empty_cache()
+from datetime import datetime, timezone
 import structlog
 from datasets import Dataset, load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
@@ -59,10 +61,14 @@ def format_gemma_prompt(df, text_col: str = "text", summary_col: str = "summary"
         
     return Dataset.from_list(formatted_prompts)
 
-def train_gemma_summarizer():
+def train_gemma_summarizer(dataset_path: str | None = None):
     # model_id = "google/gemma-4-E2B-it" # 10.2GB
-    model_id = "google/gemma-3-1b-it" # 2GB    
-    dataset = load_dataset("arbml/AraSum", split="train")
+    model_id = "google/gemma-3-1b-it" # 2GB  
+    if dataset_path is None:
+        dataset = load_dataset("arbml/AraSum",split="train")
+    else:
+        dataset = load_dataset("json",data_files=dataset_path,split="train")  
+    # dataset = load_dataset("arbml/AraSum", split="train")
 
     shuffled_dataset = dataset.shuffle(seed=11)
 
@@ -156,11 +162,16 @@ def train_gemma_summarizer():
     gc.collect()
     torch.cuda.empty_cache()
     trainer.train()
-    
-    save_path = "./train/models/gemma3_1b_arabic_summarizer_adapter_2"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    save_path = os.path.join("train","models",f"gemma3_1b_arabic_summarizer_adapter_2_{timestamp}")
+    # save_path = "./train/models/gemma3_1b_arabic_summarizer_adapter_2"
     trainer.model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
     print(f"Summarizer adapters successfully saved to: {save_path}")
+    return{
+        "model_path":save_path
+    }
+    
 
 if __name__ == "__main__":
     train_gemma_summarizer()

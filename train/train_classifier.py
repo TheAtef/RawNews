@@ -97,15 +97,52 @@ def run_classifier_training(task_name: str = "propaganda_binary", train_path=Non
     )
 
     print(f"Loading Quantized Model: {MODEL_NAME}")
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        quantization_config=bnb_config,
-        device_map={"": 0},   
-        trust_remote_code=True,
-        attn_implementation="sdpa"  
-    )
+    # model = AutoModelForCausalLM.from_pretrained(
+    #     MODEL_NAME,
+    #     quantization_config=bnb_config,
+    #     device_map={"": 0},   
+    #     trust_remote_code=True,
+    #     attn_implementation="sdpa"  
+    # )
 
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    # model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+
+
+
+    ###############################
+    print(f"Loading Quantized Model: {MODEL_NAME}")
+
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            quantization_config=bnb_config,
+            device_map={"": 0},
+            trust_remote_code=True,
+            attn_implementation="sdpa"
+        )
+
+        print(">>> MODEL LOADED SUCCESSFULLY")
+
+    except Exception as e:
+        print(">>> MODEL LOADING FAILED")
+        print(type(e).__name__)
+        print(str(e))
+        raise
+
+    try:
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=True
+        )
+
+        print(">>> MODEL PREPARED SUCCESSFULLY")
+
+    except Exception as e:
+        print(">>> MODEL PREPARATION FAILED")
+        print(type(e).__name__)
+        print(str(e))
+        raise
+    ########################################
 
     peft_config = LoraConfig(
         r=16,
@@ -226,10 +263,10 @@ def run_classifier_training(task_name: str = "propaganda_binary", train_path=Non
     print(f"Parse Failure Rate:      {parse_failure_rate:.4f}")
     print("=" * 40)
     return {
-        "accuracy": avg_accuracy,
+        # "accuracy": avg_accuracy,
         "propaganda_f1": pr_f1,
-        "statement_accuracy": st_acc,
-        "attribution_accuracy": at_acc,
+        # "statement_accuracy": st_acc,
+        # "attribution_accuracy": at_acc,
         "model_path": save_path,
     }
 

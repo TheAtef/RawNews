@@ -28,6 +28,7 @@ from transformers import AutoModelForCausalLM
 class AraBERTClassifier:
     def __init__(self) -> None:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # self.device="cpu"
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.multi_sentiment_model_id)
             
