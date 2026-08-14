@@ -32,7 +32,8 @@ class NewsSynthesizer:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     settings.gemma_model_id,
                     torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                    device_map="cuda" if torch.cuda.is_available() else "cpu"
+                    device_map="cuda" if torch.cuda.is_available() else "cpu",
+                    attn_implementation="sdpa" if torch.cuda.is_available() else None
                 )
                 self.is_enabled = True
         except Exception as e:
@@ -41,7 +42,7 @@ class NewsSynthesizer:
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
         for idx, text in enumerate(articles_content):
-            trimmed_text = text.strip()[:1800]
+            trimmed_text = text.strip()[:1000]
             if trimmed_text:
                 combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
 
@@ -82,7 +83,7 @@ class NewsSynthesizer:
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=700,
+                        max_new_tokens=500,
                         temperature=0.3,
                         repetition_penalty=1.15,
                         do_sample=True,

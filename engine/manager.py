@@ -128,8 +128,8 @@ class SourceManager:
         self._classifier = AraBERTClassifier()
         self._grouper = StoryGrouper()
         
-        self._ner = NER()
-        self._deduplicator = ArticleDeduplicator(similarity_threshold=0.82)
+        self._ner = None
+        self._deduplicator = ArticleDeduplicator(similarity_threshold=0.70)
         self._warmed_up = False
 
     async def _warm_up_processors(self, session: AsyncSession) -> None:
@@ -293,9 +293,10 @@ class SourceManager:
             cleaned_content = self._cleaner.clean(content_to_use)
             normalized_content = self._normalizer.normalize(cleaned_content)
             
-            is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
-            if is_dup:
-                continue
+            if len(normalized_content) > 150:
+                            is_dup, _ = self._deduplicator.is_duplicate(raw.url, normalized_content)
+                            if is_dup:
+                                continue
 
             existing_urls.add(url)
 
@@ -318,7 +319,8 @@ class SourceManager:
         if not valid_items:
             return []
         ner_texts = [item["cleaned_content"][:800] for item in valid_items]
-        batch_entities = self._ner.extract_entities_batch(ner_texts)
+        batch_entities = [{"person": [], "location": [], "organization": [], "misc": []} for _ in valid_items]
+
 
         qwen_input_items = [
             {
@@ -522,7 +524,6 @@ class SourceManager:
             }
             for s in self._sources
         ]
-        
     async def search_google_news(
         self, 
         query: str, 
@@ -531,23 +532,31 @@ class SourceManager:
         scrape_full_content: bool = True,
         session: Optional[AsyncSession] = None
     ) -> List[Any]:
+        
         google_news = GoogleNews(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
         entries = await google_news.fetch_news()
-        scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
+        
+        scraper = ArticleScraper(timeout=3)
         articles: List[RawArticle] = []
-
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(15)
 
         async def fetch_single_article(entry):
             async with semaphore:
                 try:
-                    text = await asyncio.to_thread(_extract_newspaper_content, entry.link)
-                    if not text:
-                        text = await scraper.scrape(entry.link)
-                    
                     title = getattr(entry, "title", "") or ""
                     if " - " in title:
                         title = title.rsplit(" - ", 1)[0]
+
+                    text = None
+                    try:
+                        text = await asyncio.wait_for(scraper.scrape(entry.link), timeout=3.5)
+                    except Exception:
+                        pass  
+                    
+                    if not text or len(text) < 50:
+                        raw_summary = getattr(entry, "summary", getattr(entry, "description", title))
+                        from bs4 import BeautifulSoup
+                        text = BeautifulSoup(raw_summary, "lxml").get_text(separator=" ").strip()
 
                     source_name = getattr(entry.source, "title", "Google News") if hasattr(entry, "source") else "Google News"
                     
@@ -557,10 +566,7 @@ class SourceManager:
                             from dateutil import parser as dt_parser
                             pub_date = dt_parser.parse(entry.published)
                             if pub_date.tzinfo is not None:
-                                pub_date = pub_date.astimezone(
-                                    timezone.utc
-                                ).replace(tzinfo=None)
-
+                                pub_date = pub_date.astimezone(timezone.utc).replace(tzinfo=None)
                         except Exception:
                             pass
 
@@ -588,4 +594,5 @@ class SourceManager:
         if session and articles:
             persisted_articles = await self._persist_articles(session=session, raw_articles=articles, query=query)
             return persisted_articles 
+            
         return articles
