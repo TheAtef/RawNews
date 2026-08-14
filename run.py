@@ -125,4 +125,4 @@ async def run_intelligence_pipeline(
 if __name__ == "__main__":
     query_term = "ايران وامريكا"
     
-    asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=8))
+    asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="3d", limit=10))

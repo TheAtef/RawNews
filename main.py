@@ -557,36 +557,42 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         },
     }
 
+######################################################################3
+# @app.post(
+#     "/fetch",
+#     summary="Trigger manual news fetch",
+#     tags=["Sources"],
+# )
+# async def trigger_fetch(
+#     background_tasks: BackgroundTasks,
+#     db: AsyncSession = Depends(get_db),
+#     max_per_source: Optional[int] = Query(default=50, ge=1, description="Maximum articles per source"),
+#     age_hours: int = Query(default=48, ge=1),
+#     scrape_full_content: bool = Query(default=True),
+# ) -> Dict[str, Any]:
+#     async def _do_fetch() -> None:
+#         from db.session import AsyncSessionLocal
+#         async with AsyncSessionLocal() as session:
+#             try:
+#                 articles = await source_manager.fetch_all(
+#                     session=session,
+#                     max_per_source=max_per_source,
+#                     age_hours=age_hours,
+#                     scrape_full_content=scrape_full_content
+#                 )
+#                 await session.commit()
+#                 logger.info("manual_fetch_done", count=len(articles))
+#             except Exception as e:
+#                 logger.error("manual_fetch_error", error=str(e))
 
-@app.post(
-    "/fetch",
-    summary="Trigger manual news fetch",
-    tags=["Sources"],
-)
-async def trigger_fetch(
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    max_per_source: Optional[int] = Query(default=50, ge=1, description="Maximum articles per source"),
-    age_hours: int = Query(default=48, ge=1),
-    scrape_full_content: bool = Query(default=True),
-) -> Dict[str, Any]:
-    async def _do_fetch() -> None:
-        from db.session import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
-            try:
-                articles = await source_manager.fetch_all(
-                    session=session,
-                    max_per_source=max_per_source,
-                    age_hours=age_hours,
-                    scrape_full_content=scrape_full_content
-                )
-                await session.commit()
-                logger.info("manual_fetch_done", count=len(articles))
-            except Exception as e:
-                logger.error("manual_fetch_error", error=str(e))
+#     background_tasks.add_task(_do_fetch)
+#     return {"status": "fetch_scheduled", "message": "News fetch started in background"}
+#################################################################################################
 
-    background_tasks.add_task(_do_fetch)
-    return {"status": "fetch_scheduled", "message": "News fetch started in background"}
+
+
+
+
 
 # @app.get(
 #     "/search_testing",
