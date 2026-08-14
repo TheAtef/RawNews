@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     gemma_model_id: str = "./train/models/gemma3_1b_arabic_summarizer_adapter"
     # gemma_api_url: str = "http://localhost:11434/v1" 
     # gemma_api_key: str = "ollama"
-    use_local_gemma_pipeline: bool = True  
+    use_local_gemma_pipeline: bool = False  
     
     # clustering Parameters
     clustering_similarity_threshold: float = 0.78

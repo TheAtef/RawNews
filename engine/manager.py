@@ -7,6 +7,7 @@ import numpy as np
 import structlog
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from core.config import NewsSourceConfig, settings
 from core.sources_list import ARABIC_NEWS_SOURCES
 from core.constants import ARABIC_STOPWORDS, ARABIC_BOILERPLATE_KEYWORDS, GEO_DOMAINS, IGNORE_TITLE_WORDS
@@ -58,7 +59,7 @@ def is_boilerplate(text: str) -> bool:
         return True
     if len(text) < 250:
         match_count = sum(1 for kw in ARABIC_BOILERPLATE_KEYWORDS if kw in text)
-        if match_count >= 3:
+        if match_count >= 2:
             return True
     return False
 
@@ -105,17 +106,6 @@ def has_title_vocabulary_conflict(title_a: str, title_b: str) -> bool:
     return False
 
 
-def _extract_newspaper_content(url: str) -> str:
-    try:
-        from newspaper import Article
-        article = Article(url, language='ar')
-        article.download()
-        article.parse()
-        return article.text or ""
-    except Exception:
-        return ""
-
-
 class SourceManager:
     def __init__(self) -> None:
         self._sources = ARABIC_NEWS_SOURCES
@@ -136,11 +126,12 @@ class SourceManager:
         if self._warmed_up:
             return
 
-        cutoff = datetime.utcnow() - timedelta(hours=72)
+        cutoff = datetime.utcnow() - timedelta(hours=48)
         stmt = (
             select(ArticleORM)
             .where(ArticleORM.scraped_at >= cutoff)
-            .order_by(ArticleORM.id.asc())
+            .order_by(ArticleORM.id.desc())
+            .limit(100)
         )
         result = await session.execute(stmt)
         recent_articles = result.scalars().all()
@@ -150,9 +141,6 @@ class SourceManager:
                 self._deduplicator.seed_known_article(art.url, art.content)
             elif art.title:
                 self._deduplicator.seed_known_article(art.url, art.title)
-
-            if art.cluster_id and art.content_clean:
-                self._grouper.seed_cluster_anchor(art.cluster_id, art.content_clean)
 
         self._warmed_up = True
         logger.info("processors_warmed_up", loaded_count=len(recent_articles))
@@ -168,7 +156,7 @@ class SourceManager:
         cutoff = datetime.utcnow() - timedelta(hours=age_hours)
 
         rss_fetcher = RSSFetcher(timeout=settings.fetch_timeout_seconds)
-        scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
+        scraper = ArticleScraper(timeout=4)
 
         tasks = [
             self._fetch_source(
@@ -230,7 +218,6 @@ class SourceManager:
         session: AsyncSession,
         raw_articles: List[RawArticle],
         query: Optional[str] = None,
-
     ) -> List[ArticleORM]:
         if not raw_articles:
             return []
@@ -242,38 +229,21 @@ class SourceManager:
         existing_result = await session.execute(existing_stmt)
         existing_urls = {row[0] for row in existing_result.fetchall()}
 
-        time_cutoff = datetime.utcnow() - timedelta(hours=48)
+        time_cutoff = datetime.utcnow() - timedelta(hours=36)
         active_stmt = select(ArticleORM).where(
             and_(
                 ArticleORM.published_at >= time_cutoff,
                 ArticleORM.cluster_id.is_not(None)
             )
-        )
+        ).order_by(ArticleORM.id.desc()).limit(80)
+        
         active_result = await session.execute(active_stmt)
         active_articles = list(active_result.scalars().all())
 
-
-
-        # max_id_stmt = select(ArticleORM.cluster_id).order_by(ArticleORM.cluster_id.desc()).limit(1)
-        # max_id_res = await session.execute(max_id_stmt)
-        # max_id_row = max_id_res.fetchone()
-        # next_cluster_id = (max_id_row[0] + 1) if max_id_row and max_id_row[0] else 1
-
-
-        #############################################################################################3
-
-        existing_clusters_stmt = select(ClusterORM)
-        existing_clusters_result = await session.execute(existing_clusters_stmt)
-        existing_clusters = {cluster.id: cluster for cluster in existing_clusters_result.scalars().all()}
-        #########################################################################################
-
-        new_articles: List[ArticleORM] = []
-
         embedding_cache: Dict[int, np.ndarray] = {}
         for art in active_articles:
-            art_text = art.title_clean + " " + (art.content_clean[:400] if art.content_clean else "")
+            art_text = (art.title_clean or "") + " " + ((art.content_clean or "")[:250])
             embedding_cache[art.id] = self._grouper.get_normalized_embedding(art_text)
-
 
         valid_items = []
         for url, raw in unique_raw_map.items():
@@ -284,7 +254,7 @@ class SourceManager:
                 continue
 
             content_to_use = raw.content or ""
-            if is_boilerplate(content_to_use):
+            if is_boilerplate(content_to_use) or len(content_to_use.strip()) < 40:
                 content_to_use = raw.title
 
             cleaned_title = self._cleaner.clean(raw.title)
@@ -317,18 +287,21 @@ class SourceManager:
 
         if not valid_items:
             return []
-        ner_texts = [item["cleaned_content"][:800] for item in valid_items]
+
+        ner_texts = [item["cleaned_content"][:400] for item in valid_items]
         batch_entities = self._ner.extract_entities_batch(ner_texts)
 
         qwen_input_items = [
             {
                 "title": item["raw"].title,
-                "text": item["normalized_content"][:800],
+                "text": item["normalized_content"][:400],
                 "loaded_words_ratio": item["loaded_words_ratio"]
             }
             for item in valid_items
         ]
         batch_propaganda = self._classifier.classify_propaganda_batch(qwen_input_items)
+
+        new_articles: List[ArticleORM] = []
 
         for idx, item in enumerate(valid_items):
             raw = item["raw"]
@@ -344,7 +317,7 @@ class SourceManager:
             new_locations = set(entities.get("location", []))
             new_orgs = set(entities.get("organization", []))
             
-            text_to_embed = normalized_title + " " + normalized_content[:400]
+            text_to_embed = normalized_title + " " + normalized_content[:250]
             new_norm_emb = self._grouper.get_normalized_embedding(text_to_embed)
             
             candidates: List[ArticleORM] = []
@@ -377,14 +350,14 @@ class SourceManager:
                 stem_intersection = new_title_stems & art_title_stems
 
                 matches_count = sum([has_person_match, has_location_match, has_org_match])
-                title_weight = min(1.0, len(stem_intersection) / 4.0)
+                title_weight = min(1.0, len(stem_intersection) / 3.0)
                 confidence = (matches_count * 0.35) + (title_weight * 0.5)
                 
                 candidates.append(active_art)
                 candidate_confidences[active_art.id] = confidence
 
             assigned_cluster_id = None
-            base_threshold = 0.87 
+            base_threshold = 0.84
 
             if candidates:
                 cluster_groups = defaultdict(list)
@@ -402,7 +375,7 @@ class SourceManager:
                     for art in group:
                         art_emb = embedding_cache.get(art.id)
                         if art_emb is None:
-                            art_text = art.title_clean + " " + (art.content_clean[:400] if art.content_clean else "")
+                            art_text = (art.title_clean or "") + " " + ((art.content_clean or "")[:250])
                             art_emb = self._grouper.get_normalized_embedding(art_text)
                             embedding_cache[art.id] = art_emb
                             
@@ -423,10 +396,10 @@ class SourceManager:
                         best_cluster_id = cid
                         best_group_confidence = max_heuristic_confidence
 
-                if best_group_confidence >= 0.7:
-                    adapted_threshold = 0.83  
-                elif best_group_confidence >= 0.4:
-                    adapted_threshold = 0.85  
+                if best_group_confidence >= 0.6:
+                    adapted_threshold = 0.78  
+                elif best_group_confidence >= 0.3:
+                    adapted_threshold = 0.81  
                 else:
                     adapted_threshold = base_threshold
 
@@ -434,19 +407,14 @@ class SourceManager:
                     assigned_cluster_id = best_cluster_id
 
             if assigned_cluster_id is None:
-                # assigned_cluster_id = next_cluster_id
-                # next_cluster_id += 1
-                #######################################################3
                 new_cluster = ClusterORM(query=query)
                 session.add(new_cluster)
                 await session.flush()
                 assigned_cluster_id = new_cluster.id
-                existing_clusters[assigned_cluster_id] = new_cluster
-###########################################################################33
 
             scores = self._scorer.evaluate_article(
                 source_name=raw.source_name,
-                raw_text=content_to_use[:1000],
+                raw_text=content_to_use[:600],
                 tokens=filtered_tokens,
                 title=raw.title
             )
@@ -454,7 +422,7 @@ class SourceManager:
             computed_attribution = self._scorer.determine_attribution_label(scores["attribution_score"])
             computed_statement = self._scorer.determine_statement_type(
                 title=raw.title, 
-                raw_text=content_to_use[:1000], 
+                raw_text=content_to_use[:600], 
                 neutrality_score=scores["neutrality_score"]
             )
 
@@ -510,6 +478,7 @@ class SourceManager:
             return []
 
         return new_articles
+
     def get_source_info(self) -> List[Dict[str, Any]]:
         return [
             {
@@ -531,43 +500,48 @@ class SourceManager:
         scrape_full_content: bool = True,
         session: Optional[AsyncSession] = None
     ) -> List[Any]:
-        google_news = GoogleNews(query=query, time_window=time_window, limit=limit, scrape_full_content=scrape_full_content)
+        google_news = GoogleNews(
+            query=query, 
+            time_window=time_window, 
+            limit=limit, 
+            scrape_full_content=scrape_full_content
+        )
         entries = await google_news.fetch_news()
-        scraper = ArticleScraper(timeout=settings.fetch_timeout_seconds)
+        scraper = ArticleScraper(timeout=4)
         articles: List[RawArticle] = []
 
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(10)  
 
         async def fetch_single_article(entry):
             async with semaphore:
                 try:
-                    text = await asyncio.to_thread(_extract_newspaper_content, entry.link)
-                    if not text:
-                        text = await scraper.scrape(entry.link)
-                    
                     title = getattr(entry, "title", "") or ""
                     if " - " in title:
                         title = title.rsplit(" - ", 1)[0]
 
                     source_name = getattr(entry.source, "title", "Google News") if hasattr(entry, "source") else "Google News"
                     
+                    text = None
+                    if scrape_full_content and getattr(entry, "link", None):
+                        try:
+                            text = await asyncio.wait_for(scraper.scrape(entry.link), timeout=4.0)
+                        except Exception:
+                            text = None
+
                     pub_date = datetime.utcnow()
                     if hasattr(entry, "published"):
                         try:
                             from dateutil import parser as dt_parser
                             pub_date = dt_parser.parse(entry.published)
                             if pub_date.tzinfo is not None:
-                                pub_date = pub_date.astimezone(
-                                    timezone.utc
-                                ).replace(tzinfo=None)
-
+                                pub_date = pub_date.astimezone(timezone.utc).replace(tzinfo=None)
                         except Exception:
                             pass
 
                     return RawArticle(
                         url=entry.link,
                         title=title,
-                        content=text or title,
+                        content=text or title, 
                         source_name=source_name,
                         published_at=pub_date,
                         scraped_at=datetime.utcnow(),
@@ -575,7 +549,7 @@ class SourceManager:
                         language="ar",
                     )
                 except Exception as e:
-                    logger.error("google_news_article_error", url=getattr(entry, "link", ""), error=str(e))
+                    logger.warning("article_fetch_skipped", url=getattr(entry, "link", ""), error=str(e))
                     return None
 
         tasks = [fetch_single_article(e) for e in entries[:limit]]

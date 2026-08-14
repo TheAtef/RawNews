@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import structlog
 from typing import Any, List, Dict, Set, Optional
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel, BitsAndBytesConfig
 from core.config import settings
 from preprocessing.propaganda_features import (LOADED_PHRASES, calculate_loaded_words_ratio)
 # from core.constants import BIAS_INDICATORS
@@ -28,19 +28,22 @@ from peft import PeftModel
 
 class AraBERTClassifier:
     def __init__(self) -> None:
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        # self.device="cpu"
         try:
             self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-0.8B")
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-            
-            device_map = {"": self.device} if torch.cuda.is_available() else None
+
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True
+            )
 
             base_model = AutoModelForCausalLM.from_pretrained(
                 "Qwen/Qwen3.5-0.8B",
-                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-                device_map=device_map,
+                quantization_config=bnb_config,
+                device_map={"": 0} if torch.cuda.is_available() else None,
                 attn_implementation="sdpa" if torch.cuda.is_available() else None
             )
             self.model = PeftModel.from_pretrained(
@@ -173,7 +176,7 @@ class HeuristicScorer:
         }
 class StoryGrouper:
     def __init__(self) -> None:
-        self.device = "cuda" if settings.device == "cuda" and torch.cuda.is_available() else "cpu"
+        self.device = "cpu"
         self.tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_id)
         self.model = AutoModel.from_pretrained(settings.embedding_model_id).to(self.device)
         self.model.eval()
@@ -190,7 +193,7 @@ class StoryGrouper:
             return np.zeros(768, dtype=np.float32)
 
         inputs = self.tokenizer(
-            [text], padding=True, truncation=True, max_length=256, return_tensors="pt"
+            [text], padding=True, truncation=True, max_length=128, return_tensors="pt"
         ).to(self.device)
 
         with torch.no_grad():
@@ -205,6 +208,29 @@ class StoryGrouper:
         if norm == 0:
             return raw_vector
         return raw_vector / norm
+
+    def get_normalized_embeddings_batch(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            return np.empty((0, 768), dtype=np.float32)
+
+        valid_texts = [t if t.strip() else " " for t in texts]
+
+        inputs = self.tokenizer(
+            valid_texts,
+            padding=True,
+            truncation=True,
+            max_length=128,
+            return_tensors="pt"
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            embeddings = self._mean_pooling(outputs, inputs["attention_mask"])
+
+        vectors = embeddings.cpu().numpy()
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return vectors / norms
 
     def update_running_mean(self, raw_vector: np.ndarray) -> None:
         self.total_processed += 1

@@ -7,7 +7,7 @@ import torch
 import gc
 import structlog
 from typing import List
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from core.config import settings
 
 logger = structlog.get_logger(__name__)
@@ -19,6 +19,18 @@ class NewsSynthesizer:
         self.tokenizer = None
         self.model = None
         self.is_enabled = False
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type="nf4"
+        )
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            settings.gemma_model_id,
+            quantization_config=quantization_config,
+            device_map="auto",
+            attn_implementation="sdpa"
+)
 
         try:
             if settings.gemma_model_id.startswith("./") and not os.path.exists(settings.gemma_model_id):
