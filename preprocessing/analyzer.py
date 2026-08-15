@@ -37,12 +37,12 @@ class AraBERTClassifier:
 
             base_model = AutoModelForCausalLM.from_pretrained(
                 "Qwen/Qwen3.5-0.8B",
-                device_map={"": 0} if torch.cuda.is_available() else None,
+                device_map="cuda",
                 attn_implementation="sdpa" if torch.cuda.is_available() else None
             )
             self.model = PeftModel.from_pretrained(
                         base_model, settings.multi_sentiment_model_id
-                    ).to("cpu") 
+                    ).to("cuda") 
             self.enabled = True
         except Exception as e:
             logger.error("qwen_classifier_init_failed", error=str(e))
@@ -100,8 +100,6 @@ class AraBERTClassifier:
                     results.append(parse_output(decoded_output))
                     
                 del inputs, outputs
-                self.model.to("cpu")
-                torch.cuda.empty_cache()
 
             except Exception as e:
                 logger.error("qwen_batch_inference_error", error=str(e))
@@ -221,7 +219,6 @@ class StoryGrouper:
                 all_vectors.append(embeddings.cpu().numpy())
                 
             del inputs, outputs
-            torch.cuda.empty_cache()
 
         vectors = np.vstack(all_vectors)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)

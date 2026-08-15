@@ -11,7 +11,7 @@ class NER:
             model=model_name,
             tokenizer=model_name,
             aggregation_strategy="simple",
-            device=device
+            device="cpu"
         )
 
     def remove_sub_entities(self, items):

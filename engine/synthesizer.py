@@ -90,9 +90,7 @@ class NewsSynthesizer:
         return [{"role": "user", "content": content}]
 
     def _generate_summary_sync(self, messages: list, prompt: str) -> str:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
+
 
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         input_length = inputs["input_ids"].shape[1]
@@ -100,7 +98,7 @@ class NewsSynthesizer:
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=500,
+                max_new_tokens=400,
                 do_sample=False,            
                 repetition_penalty=1.2,      
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
@@ -111,9 +109,7 @@ class NewsSynthesizer:
 
         final_summary = re.sub(r"<[^>]+>", "", decoded).strip()
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
+ 
         return final_summary
 
     async def synthesize_cluster(self, articles_content: List[str]) -> str:
