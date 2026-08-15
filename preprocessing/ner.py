@@ -5,7 +5,7 @@ class NER:
     def __init__(self):
         model_name = "MostafaAhmed98/AraBert-Arabic-NER-CoNLLpp"
         
-        device=-1
+        device = -1
         self.ner = pipeline(
             "ner",
             model=model_name,

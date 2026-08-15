@@ -176,7 +176,7 @@ class HeuristicScorer:
         }
 class StoryGrouper:
     def __init__(self) -> None:
-        self.device = "cpu"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_id)
         self.model = AutoModel.from_pretrained(settings.embedding_model_id).to(self.device)
         self.model.eval()

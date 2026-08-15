@@ -300,7 +300,7 @@ async def search_news(
 ):
     start = time.perf_counter()
 
-    limit = min(limit, 20)
+    limit = min(limit, 10)
     result = await run_intelligence_pipeline(
         search_query=query,
         time_window=time_window,
@@ -602,90 +602,6 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
 
 
 
-# @app.get(
-#     "/search_testing",
-#     summary="Search and analyze news articles with AI models",
-#     tags=["Search"],
-# ) 
-# async def search_news(
-#     query: str = Query(..., description="Search query"),
-#     time_window: str = Query(default="7d", description="Time window for search relevance"),
-#     limit: int = Query(default=20, ge=1, description="Maximum number of articles to search"),
-    
-#     scrape_full_content: bool = Query(default=True),
-#     db: AsyncSession = Depends(get_db),
-# ) -> Dict[str, Any]:
-#     try:
-#         raw_articles = await source_manager.search_google_news(
-#             query=query, 
-#             time_window=time_window, 
-#             limit=limit, 
-#             scrape_full_content=scrape_full_content
-#         )
-
-#         if not raw_articles:
-#             return {
-#                 "status": "success",
-#                 "query": query,
-#                 "time_window": time_window,
-#                 "clusters": []
-#             }
-
-#         persisted_articles = await source_manager._persist_articles(
-#             session=db,
-#             raw_articles=raw_articles
-#         )
-
-#         if not persisted_articles:
-#             stmt = select(ArticleORM).order_by(ArticleORM.published_at.desc()).limit(limit)
-#             res = await db.execute(stmt)
-#             persisted_articles = res.scalars().all()
-
-#         clusters_map: Dict[int, List[ArticleORM]] = collections.defaultdict(list)
-#         for art in persisted_articles:
-#             cid = art.cluster_id or 1
-#             clusters_map[cid].append(art)
-
-#         output_clusters = []
-#         for cid, articles_list in clusters_map.items():
-#             cluster_articles = [
-#                 {
-#                     "id": art.id,
-#                     "url": art.url,
-#                     "title": art.title,
-#                     "source_name": art.source_name,
-#                     "published_at": art.published_at.isoformat() if art.published_at else "",
-                    
-#                     "reliability_score": art.reliability_score,
-#                     "neutrality_score": art.neutrality_score,
-#                     "verified": art.verified,
-#                     "statement_type": art.statement_type,     
-#                     "attribution_label": art.attribution_label,
-#                     "propaganda_label": art.propaganda_label,  
-#                     "cluster_id": cid
-#                 }
-#                 for art in articles_list
-#             ]
-
-#             output_clusters.append({
-#                 "cluster_id": cid,
-#                 "summary": None,
-#                 "articles": cluster_articles
-#             })
-
-#         return {
-#             "status": "success",
-#             "query": query,
-#             "time_window": time_window,
-#             "clusters": output_clusters
-#         }
-
-#     except Exception as e:
-#         logger.error("search_ai_pipeline_error", error=str(e))
-#         raise HTTPException(
-#             status_code=500,
-#             detail=f"Failed to run AI search pipeline: {str(e)}"
-#         )
 @app.post(
     "/article-feedback"
 )
