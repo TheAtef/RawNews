@@ -102,12 +102,11 @@ async def run_intelligence_pipeline(
 
 
 
-async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer|None=None,):
+async def generate_cluster_summary(cluster_id: int):
     logger.info(f"Starting summary generation for cluster {cluster_id}")
     await init_db()
     logger.info("Database initialized")
-    if synthesizer is None:
-        synthesizer = NewsSynthesizer()
+    synthesizer = NewsSynthesizer()
     async with AsyncSessionLocal() as session:
         try:
             cluster = await session.get(ClusterORM, cluster_id)
@@ -126,6 +125,13 @@ async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer|
             if not articles_content:
                 return None
             logger.info(f"Starting Gemma summarization "f"for cluster {cluster_id}...")
+            logger.info(
+                f"Gemma state | "
+                f"use_local={synthesizer.use_local} | "
+                f"is_enabled={synthesizer.is_enabled} | "
+                f"model_loaded={synthesizer.model is not None} | "
+                f"tokenizer_loaded={synthesizer.tokenizer is not None}"
+            )
             summary = await synthesizer.synthesize_cluster(articles_content)
             logger.info(f"Gemma summarization completed "f"for cluster {cluster_id}")
 

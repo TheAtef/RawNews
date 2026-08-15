@@ -37,6 +37,10 @@ class NewsSynthesizer:
                 self.is_enabled = True
         except Exception as e:
             logger.error("summarizer_init_failed", error=str(e))
+                # logger.error(
+                #         f"summarizer_init_failed: {type(e).__name__}: {e}",
+                #         exc_info=True
+                #     )
 
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
