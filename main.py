@@ -286,7 +286,7 @@ async def get_news_feed(
             detail="Failed to retrieve articles."
         )
 
-    
+import time
 @app.get(
     "/search",
     response_model=SearchResponseSchema,
@@ -298,12 +298,20 @@ async def search_news(
     time_window: Literal["1h", "1d", "3d", "7d", "30d"] = Query(default="3d"),
     limit: int = Query(default=10, ge=1, le=50),
 ):
+    start = time.perf_counter()
+
     limit = min(limit, 20)
     result = await run_intelligence_pipeline(
         search_query=query,
         time_window=time_window,
         limit=limit,manager=source_manager,
         synthesizer=news_synthesizer
+    )
+    elapsed = time.perf_counter() - start
+
+    logger.info(
+        "search_completed",
+        elapsed_seconds=round(elapsed, 2)
     )
 
     if result is None:
