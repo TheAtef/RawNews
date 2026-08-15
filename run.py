@@ -84,7 +84,7 @@ async def run_intelligence_pipeline(
                             print("=" * 60 + "\n")
                             
                             response["clusters"].append(cluster_data)
-                
+                            await session.commit()
             return response
             
         except Exception as e:
