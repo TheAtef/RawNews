@@ -21,7 +21,7 @@ async def run_intelligence_pipeline(
     time_window: str = "3d", 
     limit: int = 10, 
     manager: SourceManager | None = None,
-    synthesizer: NewsSynthesizer | None = None
+    # synthesizer: NewsSynthesizer | None = None
 ):
     logger.info("Initializing SQLite database schemas...")
     await init_db()
@@ -31,8 +31,8 @@ async def run_intelligence_pipeline(
     if manager is None:
         manager = SourceManager()
         
-    if synthesizer is None:
-        synthesizer = NewsSynthesizer()
+    # if synthesizer is None:
+    #     synthesizer = NewsSynthesizer()
 
     async with AsyncSessionLocal() as session:
         try:
@@ -77,10 +77,17 @@ async def run_intelligence_pipeline(
                             cluster_data["articles"] = articles  
 
                             articles_content = [art.content_clean or art.content or art.title for art in articles]
-                            summary = await synthesizer.synthesize_cluster(articles_content)
-                            cluster_data["summary"] = summary
-                            print("\n Neutral Summary ")
-                            print(summary)
+                            # summary = await synthesizer.synthesize_cluster(articles_content)
+                            # cluster_data["summary"] = summary
+                            # cluster = await session.get(ClusterORM, cluster_id)
+
+                            # if cluster:
+                            #     cluster.summary = summary
+
+                            # print("\n Neutral Summary ")
+                            # print(summary)
+                            cluster_data["summary"]=None
+                            print("\n" + "=" * 60)
                             print("=" * 60 + "\n")
                             
                             response["clusters"].append(cluster_data)
@@ -93,6 +100,54 @@ async def run_intelligence_pipeline(
         finally:
             await session.close()
 
+
+
+async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer|None=None,):
+    logger.info(f"Starting summary generation for cluster {cluster_id}")
+    await init_db()
+    logger.info("Database initialized")
+    if synthesizer is None:
+        synthesizer = NewsSynthesizer()
+    async with AsyncSessionLocal() as session:
+        try:
+            cluster = await session.get(ClusterORM, cluster_id)
+
+            if cluster is None:
+                return None
+
+            result = await session.execute(select(ArticleORM).where(ArticleORM.cluster_id == cluster_id))
+            articles = result.scalars().all()
+
+            if not articles:
+                return None
+            articles_content = [article.content_clean or article.content or article.title for article in articles]
+
+
+            if not articles_content:
+                return None
+            logger.info(f"Starting Gemma summarization "f"for cluster {cluster_id}...")
+            summary = await synthesizer.synthesize_cluster(articles_content)
+            logger.info(f"Gemma summarization completed "f"for cluster {cluster_id}")
+
+            logger.info(f"Summary : {summary} ")
+            cluster.summary = summary
+
+
+            return {
+                "cluster_id": cluster_id,
+                "summary": summary,
+            }
+
+        except Exception as e:
+            logger.error(f"Cluster summary generation failed: {e}",exc_info=True)
+            await session.rollback()
+            return None
+
+        finally:
+            await session.close()
+
 if __name__ == "__main__":
-    query_term = "اتفاق مكة"
-    asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=10))
+    # query_term = "اتفاق مكة"
+    # asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=10))
+    asyncio.run(generate_cluster_summary(cluster_id=1))
+

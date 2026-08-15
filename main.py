@@ -31,7 +31,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Literal
-from run import run_intelligence_pipeline
+from run import run_intelligence_pipeline,generate_cluster_summary
 
 import structlog
 import uvicorn
@@ -43,8 +43,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from fastapi import BackgroundTasks
-from services.background_fetch import (background_fetch_loop,stop_background_fetch,)
-
 from core.config import settings
 from db.session import get_db, init_db
 from engine.manager import SourceManager
@@ -61,6 +59,10 @@ logger = structlog.get_logger(__name__)
 
 source_manager = SourceManager()
 news_synthesizer = NewsSynthesizer() 
+
+
+
+
 # _background_fetch_running = False
 
 
@@ -304,16 +306,10 @@ async def search_news(
     result = await run_intelligence_pipeline(
         search_query=query,
         time_window=time_window,
-        limit=limit,manager=source_manager,
-        synthesizer=news_synthesizer
+        limit=limit,manager=source_manager
     )
     elapsed = time.perf_counter() - start
-
-    logger.info(
-        "search_completed",
-        elapsed_seconds=round(elapsed, 2)
-    )
-
+    logger.info("search_completed",elapsed_seconds=round(elapsed, 2))
     if result is None:
         return SearchResponseSchema(
             status="no_results",
@@ -856,6 +852,28 @@ async def get_cluster(
             }
             for article in cluster.articles
         ]
+    }
+
+@app.get(
+    "/clusters/{cluster_id}/summary",
+    summary="Generate a summary for a story cluster",
+    tags=["Clusters"],
+)
+async def get_cluster_summary(cluster_id: int):
+    start = time.perf_counter()
+
+    result = await generate_cluster_summary(cluster_id=cluster_id,synthesizer=news_synthesizer)
+    elapsed = time.perf_counter() - start
+    logger.info("summary_completed",elapsed_seconds=round(elapsed, 2))
+    if result is None:
+        return {
+            "status": "not_found",
+            "cluster_id": cluster_id,
+            "summary": None,
+        }
+    return {
+        "status": "success",
+        **result,
     }
 
 if __name__ == "__main__":
