@@ -241,9 +241,16 @@ class SourceManager:
         active_articles = list(active_result.scalars().all())
 
         embedding_cache: Dict[int, np.ndarray] = {}
-        for art in active_articles:
-            art_text = (art.title_clean or "") + " " + ((art.content_clean or "")[:250])
-            embedding_cache[art.id] = self._grouper.get_normalized_embedding(art_text)
+        if active_articles:
+            active_texts = [
+                (art.title_clean or "") + " " + ((art.content_clean or "")[:250]) 
+                for art in active_articles
+            ]
+            active_embeddings = await asyncio.to_thread(
+                self._grouper.get_normalized_embeddings_batch, active_texts
+            )
+            for art, emb in zip(active_articles, active_embeddings):
+                embedding_cache[art.id] = emb
 
         valid_items = []
         for url, raw in unique_raw_map.items():
@@ -289,7 +296,7 @@ class SourceManager:
             return []
 
         ner_texts = [item["cleaned_content"][:400] for item in valid_items]
-        batch_entities = self._ner.extract_entities_batch(ner_texts)
+        batch_entities = await asyncio.to_thread(self._ner.extract_entities_batch, ner_texts)
 
         qwen_input_items = [
             {
@@ -299,7 +306,13 @@ class SourceManager:
             }
             for item in valid_items
         ]
-        batch_propaganda = self._classifier.classify_propaganda_batch(qwen_input_items)
+        batch_propaganda = await asyncio.to_thread(self._classifier.classify_propaganda_batch, qwen_input_items)
+
+        new_texts_to_embed = [
+            item["normalized_title"] + " " + item["normalized_content"][:250]
+            for item in valid_items
+        ]
+        new_embeddings = await asyncio.to_thread(self._grouper.get_normalized_embeddings_batch, new_texts_to_embed)
 
         new_articles: List[ArticleORM] = []
 
@@ -317,8 +330,7 @@ class SourceManager:
             new_locations = set(entities.get("location", []))
             new_orgs = set(entities.get("organization", []))
             
-            text_to_embed = normalized_title + " " + normalized_content[:250]
-            new_norm_emb = self._grouper.get_normalized_embedding(text_to_embed)
+            new_norm_emb = new_embeddings[idx]
             
             candidates: List[ArticleORM] = []
             candidate_confidences: Dict[int, float] = {}
@@ -373,10 +385,11 @@ class SourceManager:
                     max_heuristic_confidence = 0.0
 
                     for art in group:
+                        # RESTORED: Safe fallback in case of cache miss
                         art_emb = embedding_cache.get(art.id)
                         if art_emb is None:
                             art_text = (art.title_clean or "") + " " + ((art.content_clean or "")[:250])
-                            art_emb = self._grouper.get_normalized_embedding(art_text)
+                            art_emb = await asyncio.to_thread(self._grouper.get_normalized_embedding, art_text)
                             embedding_cache[art.id] = art_emb
                             
                         group_embeddings.append(art_emb)
@@ -464,6 +477,8 @@ class SourceManager:
                 is_processed=True,
             )
             session.add(article_orm)
+            await session.flush() 
+            
             new_articles.append(article_orm)
             active_articles.append(article_orm)
             
@@ -499,7 +514,7 @@ class SourceManager:
         limit: int = 10, 
         scrape_full_content: bool = True,
         session: Optional[AsyncSession] = None
-    ) -> List[Any]:
+    ) -> List[RawArticle]:
         google_news = GoogleNews(
             query=query, 
             time_window=time_window, 
@@ -560,6 +575,18 @@ class SourceManager:
                 articles.append(res)
 
         if session and articles:
-            persisted_articles = await self._persist_articles(session=session, raw_articles=articles, query=query)
-            return persisted_articles 
-        return articles
+            await self._persist_articles(session=session, raw_articles=articles, query=query)
+            
+            urls = [a.url for a in articles]
+            stmt = (
+                select(ArticleORM)
+                .where(ArticleORM.url.in_(urls))
+                .order_by(ArticleORM.published_at.desc())
+                .limit(limit) 
+            )
+            db_result = await session.execute(stmt)
+            all_persisted_articles = list(db_result.scalars().all())
+            
+            return all_persisted_articles 
+            
+        return articles[:limit]

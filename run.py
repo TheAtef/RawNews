@@ -60,29 +60,30 @@ async def run_intelligence_pipeline(
             logger.info(f"Identified {len(story_clusters)} active story clusters for this search.")
 
             for cluster_id, articles in story_clusters.items():
-                cluster_data = {"cluster_id": cluster_id, "summary": None, "articles": []}
-                print("\n" + "=" * 60)
-                print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
-                print("=" * 60)
+                            cluster_data = {"cluster_id": cluster_id, "summary": None, "articles": []}
+                            print("\n" + "=" * 60)
+                            print(f"STORY CLUSTER #{cluster_id} ({len(articles)} Source Articles)")
+                            print("=" * 60)
 
-                for idx, art in enumerate(articles, 1):
-                    bias_percentage = round((1.0 - (art.neutrality_score or 0.0)) * 100, 1)
-                    print(f"  {idx}. [{art.source_name}] {art.title}")
-                    print(f"     └─ Heuristic Statement Type: {art.statement_type}")
-                    print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
-                    print(f"     └─ Qwen Propaganda:          {art.propaganda_label}") 
-                    print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
-                    print(f"     └─ Reliability Score:        {art.reliability_score}")
-                    print("-" * 50)
+                            for idx, art in enumerate(articles, 1):
+                                bias_percentage = round((1.0 - (art.neutrality_score or 0.0)) * 100, 1)
+                                print(f"  {idx}. [{art.source_name}] {art.title}")
+                                print(f"     └─ Heuristic Statement Type: {art.statement_type}")
+                                print(f"     └─ Heuristic Attribution:    {art.attribution_label}")
+                                print(f"     └─ Qwen Propaganda:          {art.propaganda_label}") 
+                                print(f"     └─ Estimated Bias Percentage: {bias_percentage}%")
+                                print(f"     └─ Reliability Score:        {art.reliability_score}")
+                                print("-" * 50)
+                            cluster_data["articles"] = articles  
 
-                articles_content = [art.content_clean or art.content or art.title for art in articles]
-                summary = await synthesizer.synthesize_cluster(articles_content)
-                cluster_data["summary"] = summary
-                print("\n Neutral Summary ")
-                print(summary)
-                print("=" * 60 + "\n")
-                
-                response["clusters"].append(cluster_data)
+                            articles_content = [art.content_clean or art.content or art.title for art in articles]
+                            summary = await synthesizer.synthesize_cluster(articles_content)
+                            cluster_data["summary"] = summary
+                            print("\n Neutral Summary ")
+                            print(summary)
+                            print("=" * 60 + "\n")
+                            
+                            response["clusters"].append(cluster_data)
                 
             return response
             

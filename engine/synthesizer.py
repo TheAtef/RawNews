@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import asyncio
 import httpx
 import torch
 import gc
@@ -30,7 +31,7 @@ class NewsSynthesizer:
             quantization_config=quantization_config,
             device_map="auto",
             attn_implementation="sdpa"
-)
+        )
 
         try:
             if settings.gemma_model_id.startswith("./") and not os.path.exists(settings.gemma_model_id):
@@ -88,6 +89,33 @@ class NewsSynthesizer:
         )
         return [{"role": "user", "content": content}]
 
+    def _generate_summary_sync(self, messages: list, prompt: str) -> str:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        input_length = inputs["input_ids"].shape[1]
+
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=500,
+                do_sample=False,            
+                repetition_penalty=1.2,      
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
+            )
+
+        generated_tokens = outputs[0][input_length:]
+        decoded = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+
+        final_summary = re.sub(r"<[^>]+>", "", decoded).strip()
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return final_summary
+
     async def synthesize_cluster(self, articles_content: List[str]) -> str:
         cleaned_articles = [a.strip() for a in articles_content if a and a.strip()]
         if not cleaned_articles:
@@ -100,10 +128,6 @@ class NewsSynthesizer:
 
         if self.use_local:
             try:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                gc.collect()
-
                 if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
                     prompt = self.tokenizer.apply_chat_template(
                         messages, 
@@ -113,26 +137,8 @@ class NewsSynthesizer:
                 else:
                     prompt = f"<start_of_turn>user\n{messages[0]['content']}<end_of_turn>\n<start_of_turn>model\n"
 
-                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-                input_length = inputs["input_ids"].shape[1]
-
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=700,
-                        do_sample=False,            
-                        repetition_penalty=1.2,      
-                        pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
-                    )
-
-                generated_tokens = outputs[0][input_length:]
-                decoded = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
-
-                final_summary = re.sub(r"<[^>]+>", "", decoded).strip()
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
+                final_summary = await asyncio.to_thread(self._generate_summary_sync, messages, prompt)
+                
                 return final_summary
             except Exception as e:
                 logger.error("local_gemma_synthesis_failed", error=str(e))
