@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     use_local_gemma_pipeline: bool = False  
     
     # clustering Parameters
-    clustering_similarity_threshold: float = 0.78
+    clustering_similarity_threshold: float = 0.70
     
     api_host: str = "0.0.0.0"
     api_port: int = 8000

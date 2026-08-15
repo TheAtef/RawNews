@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import structlog
 from typing import Any, List, Dict, Set, Optional
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
 from core.config import settings
 from preprocessing.propaganda_features import (LOADED_PHRASES, calculate_loaded_words_ratio)
 # from core.constants import BIAS_INDICATORS
@@ -33,23 +33,16 @@ class AraBERTClassifier:
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True
-            )
+
 
             base_model = AutoModelForCausalLM.from_pretrained(
                 "Qwen/Qwen3.5-0.8B",
-                quantization_config=bnb_config,
-                device_map={"": 0} if torch.cuda.is_available() else None,
+                device_map="cuda",
                 attn_implementation="sdpa" if torch.cuda.is_available() else None
             )
             self.model = PeftModel.from_pretrained(
-                base_model, 
-                settings.multi_sentiment_model_id
-            )
+                        base_model, settings.multi_sentiment_model_id
+                    ).to("cuda") 
             self.enabled = True
         except Exception as e:
             logger.error("qwen_classifier_init_failed", error=str(e))
@@ -62,59 +55,57 @@ class AraBERTClassifier:
             "loaded_words_ratio": loaded_words_ratio
         }])
         return res[0] if res else "neutral"
-
-    def classify_propaganda_batch(self, items: List[Dict[str, Any]]) -> List[str]:
+    def classify_propaganda_batch(self, items: List[Dict[str, Any]], batch_size: int = 4) -> List[str]:
+        self.model.to("cuda")
         if not self.enabled or not items:
             return ["neutral"] * len(items)
 
-        try:
-            prompts = []
-            for item in items:
-                messages = build_messages(
-                    title=item.get("title", ""),
-                    content=item.get("text", "")[:800],
-                    loaded_words_ratio=item.get("loaded_words_ratio", 0.0),
-                    include_answer=False
-                )
-                prompts.append(
-                    self.tokenizer.apply_chat_template(
-                        messages, tokenize=False, add_generation_prompt=True
+        results = []
+        for i in range(0, len(items), batch_size):
+            chunk = items[i:i + batch_size]
+            try:
+                prompts = []
+                for item in chunk:
+                    messages = build_messages(
+                        title=item.get("title", ""),
+                        content=item.get("text", "")[:800],
+                        loaded_words_ratio=item.get("loaded_words_ratio", 0.0),
+                        include_answer=False
                     )
-                )
+                    prompts.append(
+                        self.tokenizer.apply_chat_template(
+                            messages, tokenize=False, add_generation_prompt=True
+                        )
+                    )
 
-            prev_padding_side = self.tokenizer.padding_side
-            self.tokenizer.padding_side = "left"
+                prev_padding_side = self.tokenizer.padding_side
+                self.tokenizer.padding_side = "left"
 
-            inputs = self.tokenizer(
-                prompts, 
-                return_tensors="pt", 
-                padding=True, 
-                truncation=True, 
-                max_length=1024 
-            ).to(self.model.device)
+                inputs = self.tokenizer(
+                    prompts, return_tensors="pt", padding=True, truncation=True, max_length=1024 
+                ).to(self.model.device)
 
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=20,
-                    do_sample=False, 
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id
-                )
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs, max_new_tokens=20, do_sample=False, 
+                        pad_token_id=self.tokenizer.pad_token_id, eos_token_id=self.tokenizer.eos_token_id
+                    )
 
-            self.tokenizer.padding_side = prev_padding_side
+                self.tokenizer.padding_side = prev_padding_side
 
-            results = []
-            input_len = inputs.input_ids.shape[1]
-            for idx in range(len(items)):
-                generated_tokens = outputs[idx][input_len:]
-                decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                results.append(parse_output(decoded_output))
+                input_len = inputs.input_ids.shape[1]
+                for idx in range(len(chunk)):
+                    generated_tokens = outputs[idx][input_len:]
+                    decoded_output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    results.append(parse_output(decoded_output))
+                    
+                del inputs, outputs
 
-            return results
-        except Exception as e:
-            logger.error("qwen_batch_inference_error", error=str(e))
-            return ["Error"] * len(items)
+            except Exception as e:
+                logger.error("qwen_batch_inference_error", error=str(e))
+                results.extend(["Error"] * len(chunk))
+                
+        return results
 class HeuristicScorer:
     def __init__(self, source_registry: Dict[str, float] = None):
         self.source_registry = source_registry if source_registry is not None else SOURCE_AUTHORITY
@@ -209,25 +200,27 @@ class StoryGrouper:
             return raw_vector
         return raw_vector / norm
 
-    def get_normalized_embeddings_batch(self, texts: List[str]) -> np.ndarray:
+    def get_normalized_embeddings_batch(self, texts: List[str], batch_size: int = 8) -> np.ndarray:
         if not texts:
             return np.empty((0, 768), dtype=np.float32)
 
         valid_texts = [t if t.strip() else " " for t in texts]
+        all_vectors = []
 
-        inputs = self.tokenizer(
-            valid_texts,
-            padding=True,
-            truncation=True,
-            max_length=128,
-            return_tensors="pt"
-        ).to(self.device)
+        for i in range(0, len(valid_texts), batch_size):
+            chunk = valid_texts[i:i+batch_size]
+            inputs = self.tokenizer(
+                chunk, padding=True, truncation=True, max_length=128, return_tensors="pt"
+            ).to(self.device)
 
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            embeddings = self._mean_pooling(outputs, inputs["attention_mask"])
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                embeddings = self._mean_pooling(outputs, inputs["attention_mask"])
+                all_vectors.append(embeddings.cpu().numpy())
+                
+            del inputs, outputs
 
-        vectors = embeddings.cpu().numpy()
+        vectors = np.vstack(all_vectors)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         return vectors / norms
