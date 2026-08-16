@@ -44,6 +44,7 @@ class NewsSynthesizer:
 
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
+        articles_content = articles_content[:5] 
         for idx, text in enumerate(articles_content):
             trimmed_text = text.strip()[:2000].rsplit(' ', 1)[0]
             if trimmed_text:
@@ -101,13 +102,13 @@ class NewsSynthesizer:
             try:
                 inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
                 input_length = inputs["input_ids"].shape[1]
-
+                torch.cuda.empty_cache()
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=1024,        
+                        max_new_tokens=400,        
                         do_sample=False,     
-                        num_beams=3,              
+                        num_beams=1,              
                         repetition_penalty=1.15,    
                         early_stopping=True,
                         pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id

@@ -25,8 +25,6 @@ async def run_intelligence_pipeline(
     manager: SourceManager | None = None,
     # synthesizer: NewsSynthesizer | None = None
 ):
-    logger.info("Initializing SQLite database schemas...")
-    await init_db()
 
     logger.info(f"Starting Google News search for query: '{search_query}' (Window: {time_window})")
 
