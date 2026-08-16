@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 import feedparser
 import cloudscraper
 import json
+import newspaper
 import requests
 import httpx
 from core.config import NewsSourceConfig, settings
@@ -189,6 +190,12 @@ class ArticleScraper:
         self._timeout = timeout
 
     async def scrape(self, url: str) -> Optional[str]:
+        try:
+            news4k = newspaper.article(url)
+            if news4k.is_parsed:
+                return news4k.text.strip()
+        except Exception as e:
+            pass
         try:
             response = await asyncio.to_thread(
                 self._cs.get, url, timeout=self._timeout, allow_redirects=True

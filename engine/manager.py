@@ -281,7 +281,7 @@ class SourceManager:
             filtered_tokens = self._stop_filter.filter(tokens)
 
             from preprocessing.propaganda_features import calculate_loaded_words_ratio
-            loaded_words_ratio = calculate_loaded_words_ratio(filtered_tokens)
+            loaded_words_ratio = calculate_loaded_words_ratio(tokens)
 
             valid_items.append({
                 "raw": raw,
@@ -543,6 +543,9 @@ class SourceManager:
                             text = await asyncio.wait_for(scraper.scrape(entry.link), timeout=4.0)
                         except Exception:
                             text = None
+                    
+                    if text == None or text == title:
+                        return None
 
                     pub_date = datetime.utcnow()
                     if hasattr(entry, "published"):
@@ -557,7 +560,7 @@ class SourceManager:
                     return RawArticle(
                         url=entry.link,
                         title=title,
-                        content=text or title, 
+                        content=text, 
                         source_name=source_name,
                         published_at=pub_date,
                         scraped_at=datetime.utcnow(),

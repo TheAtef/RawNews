@@ -4,9 +4,9 @@ import torch
 import numpy as np
 import structlog
 from typing import Any, List, Dict, Set, Optional
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel,BitsAndBytesConfig
 from core.config import settings
-from preprocessing.propaganda_features import (LOADED_PHRASES, calculate_loaded_words_ratio)
+from preprocessing.propaganda_features import  calculate_loaded_words_ratio
 # from core.constants import BIAS_INDICATORS
 from core.sources_list import ARABIC_NEWS_SOURCES
 from core.constants import ATTRIBUTION_MARKERS, OPINION_MARKERS
@@ -33,11 +33,16 @@ class AraBERTClassifier:
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                bnb_4bit_use_double_quant=True
+            )
 
             base_model = AutoModelForCausalLM.from_pretrained(
                 "Qwen/Qwen3.5-0.8B",
                 device_map="cuda",
+                quantization_config=bnb_config,           # <-- Added quantization
                 attn_implementation="sdpa" if torch.cuda.is_available() else None
             )
             self.model = PeftModel.from_pretrained(
@@ -115,7 +120,7 @@ class HeuristicScorer:
 
     def calculate_neutrality_score(self, tokens: List[str]) -> float:
         density = calculate_loaded_words_ratio(tokens)
-        score = max(0.0, 1.0 - (density * 15.0))
+        score = max(0.0, 1.0 - (density * 25.0))
         return round(score, 2)
 
     def calculate_attribution_score(self, text: str, title: str = "") -> float:
