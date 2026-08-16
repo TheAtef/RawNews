@@ -228,17 +228,18 @@ class SourceManager:
         existing_stmt = select(ArticleORM.url).where(ArticleORM.url.in_(urls))
         existing_result = await session.execute(existing_stmt)
         existing_urls = {row[0] for row in existing_result.fetchall()}
+        active_articles = []
 
-        time_cutoff = datetime.utcnow() - timedelta(hours=36)
-        active_stmt = select(ArticleORM).where(
-            and_(
-                ArticleORM.published_at >= time_cutoff,
-                ArticleORM.cluster_id.is_not(None)
-            )
-        ).order_by(ArticleORM.id.desc()).limit(80)
+        # time_cutoff = datetime.utcnow() - timedelta(hours=36)
+        # active_stmt = select(ArticleORM).where(
+        #     and_(
+        #         ArticleORM.published_at >= time_cutoff,
+        #         ArticleORM.cluster_id.is_not(None)
+        #     )
+        # ).order_by(ArticleORM.id.desc()).limit(80)
         
-        active_result = await session.execute(active_stmt)
-        active_articles = list(active_result.scalars().all())
+        # active_result = await session.execute(active_stmt)
+        # active_articles = list(active_result.scalars().all())
 
         embedding_cache: Dict[int, np.ndarray] = {}
         if active_articles:

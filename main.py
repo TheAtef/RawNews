@@ -19,7 +19,7 @@ import collections
 import collections.abc
 from unittest import result
 
-from engine.synthesizer import NewsSynthesizer
+# from engine.synthesizer import NewsSynthesizer
 
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
@@ -58,7 +58,7 @@ logger = structlog.get_logger(__name__)
 
 
 source_manager = SourceManager()
-news_synthesizer = NewsSynthesizer() 
+# news_synthesizer = NewsSynthesizer() 
 
 
 
@@ -862,7 +862,7 @@ async def get_cluster(
 async def get_cluster_summary(cluster_id: int):
     start = time.perf_counter()
 
-    result = await generate_cluster_summary(cluster_id=cluster_id, synthesizer=news_synthesizer)
+    result = await generate_cluster_summary(cluster_id=cluster_id)
     elapsed = time.perf_counter() - start
     logger.info("summary_completed",elapsed_seconds=round(elapsed, 2))
     if result is None:

@@ -8,6 +8,8 @@ from engine.synthesizer import NewsSynthesizer
 from db.session import init_db, AsyncSessionLocal
 from engine.manager import SourceManager
 from models.orm import ArticleORM, ClusterORM
+import gc
+import torch
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -153,7 +155,17 @@ async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer 
 
         finally:
             await session.close()
+            if synthesizer is not None:
+                synthesizer.model = None
+                synthesizer.tokenizer = None
+                synthesizer.is_enabled = False
 
+            gc.collect()
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            logger.info(f"Gemma resources released for cluster {cluster_id}")
 if __name__ == "__main__":
     # query_term = "اتفاق مكة"
     # asyncio.run(run_intelligence_pipeline(search_query=query_term, time_window="5d", limit=10))
