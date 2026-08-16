@@ -102,11 +102,13 @@ async def run_intelligence_pipeline(
 
 
 
-async def generate_cluster_summary(cluster_id: int):
+async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer | None = None):
     logger.info(f"Starting summary generation for cluster {cluster_id}")
     await init_db()
+    
     logger.info("Database initialized")
-    synthesizer = NewsSynthesizer()
+    if synthesizer is None:
+        synthesizer = NewsSynthesizer()
     async with AsyncSessionLocal() as session:
         try:
             cluster = await session.get(ClusterORM, cluster_id)
