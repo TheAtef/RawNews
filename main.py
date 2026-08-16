@@ -896,8 +896,17 @@ async def get_cluster(
     summary="Generate a summary for a story cluster",
     tags=["Clusters"],
 )
-async def get_cluster_summary(cluster_id: int):
+async def get_cluster_summary(cluster_id: int, db: AsyncSession = Depends(get_db)):
     start = time.perf_counter()
+    stmt=select(ClusterORM).where(ClusterORM.id == cluster_id)
+    r = await db.execute(stmt)
+    cluster = r.scalar_one_or_none()
+    if cluster is not None and cluster.summary.strip() and cluster.summary != "AI Summary is currently unavailable.":
+        return {
+            "status": "summary_already_exists",
+            "cluster_id": cluster_id,
+            "summary": cluster.summary,
+        }
 
     result = await generate_cluster_summary(cluster_id=cluster_id)
     elapsed = time.perf_counter() - start

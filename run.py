@@ -139,7 +139,7 @@ async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer 
 
             logger.info(f"Summary : {summary} ")
             cluster.summary = summary
-
+            await session.commit()
 
             return {
                 "cluster_id": cluster_id,
