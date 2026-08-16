@@ -6,7 +6,7 @@ import structlog
 from typing import Any, List, Dict, Set, Optional
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModel,BitsAndBytesConfig
 from core.config import settings
-from preprocessing.propaganda_features import (LOADED_PHRASES, calculate_loaded_words_ratio)
+from preprocessing.propaganda_features import  calculate_loaded_words_ratio
 # from core.constants import BIAS_INDICATORS
 from core.sources_list import ARABIC_NEWS_SOURCES
 from core.constants import ATTRIBUTION_MARKERS, OPINION_MARKERS
@@ -120,7 +120,7 @@ class HeuristicScorer:
 
     def calculate_neutrality_score(self, tokens: List[str]) -> float:
         density = calculate_loaded_words_ratio(tokens)
-        score = max(0.0, 1.0 - (density * 15.0))
+        score = max(0.0, 1.0 - (density * 25.0))
         return round(score, 2)
 
     def calculate_attribution_score(self, text: str, title: str = "") -> float:

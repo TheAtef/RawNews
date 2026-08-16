@@ -281,7 +281,7 @@ class SourceManager:
             filtered_tokens = self._stop_filter.filter(tokens)
 
             from preprocessing.propaganda_features import calculate_loaded_words_ratio
-            loaded_words_ratio = calculate_loaded_words_ratio(filtered_tokens)
+            loaded_words_ratio = calculate_loaded_words_ratio(tokens)
 
             valid_items.append({
                 "raw": raw,
