@@ -17,15 +17,15 @@ from __future__ import annotations
 
 import collections
 import collections.abc
-from unittest import result
-
-# from engine.synthesizer import NewsSynthesizer
-
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
 collections.Sequence = collections.abc.Sequence
 collections.MutableSequence = collections.abc.MutableSequence
 collections.MutableSet = collections.abc.MutableSet
+
+from unittest import result
+
+# from engine.synthesizer import NewsSynthesizer
 
 import asyncio
 from contextlib import asynccontextmanager
