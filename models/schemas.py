@@ -25,7 +25,30 @@ class ArticleSchema(BaseModel):
     class Config:
         from_attributes = True
 
+class ArticleFeedDetailsSchema(BaseModel):
+    id: int
+    source_name: str
+    title: str
+    published_at: Optional[datetime] = None
+    scraped_at: Optional[datetime] = None
+    bias_score: Optional[float] = None
+    bias_direction: Optional[str] = None
+    reliability_score: Optional[float] = None
+    neutrality_score: Optional[float] = None
+    attribution_score:Optional[float] = None
+    statement_type: Optional[str] = None
+    attribution_label: Optional[str] = None
+    propaganda_label: Optional[str] = None
+    verified: bool
 
+    word_count: Optional[int] = None
+    persons: List[str] = []
+    organizations: List[str] = []
+    locations: List[str] = []
+    misc: List[str] = []
+
+    class Config:
+        from_attributes = True
 class ArticleCardSchema(BaseModel):
     id: int
     title: str

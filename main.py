@@ -38,7 +38,7 @@ import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select, text,or_
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -48,7 +48,7 @@ from db.session import get_db, init_db
 from engine.manager import SourceManager
 
 from models.orm import ArticleORM,ArticleFeedbackORM,SummaryFeedbackORM,FeedbackStatus,ClusterORM
-from models.schemas import ArticleSchema, HealthResponse, SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema,ArticleDetailsSchema,ArticleCardSchema,ArticleListResponse,ArticleSourceSchema,ArticleSourcesResponse,SearchResponseSchema
+from models.schemas import ArticleSchema, HealthResponse,ArticleFeedDetailsSchema ,SourceInfo,ArticleFeedbackSchema,SummaryFeedbackSchemma,FeedbackStatusSchema,ArticleDetailsSchema,ArticleCardSchema,ArticleListResponse,ArticleSourceSchema,ArticleSourcesResponse,SearchResponseSchema
 from utils.logging import configure_logging
 from services.training_service import start_retraining_if_needed
 from services.summary_training_service import start_summary_retraining_if_needed
@@ -278,6 +278,43 @@ async def get_news_feed(
             "has_next": page * page_size < total,
             "articles": [
                 ArticleCardSchema.model_validate(article)
+                for article in articles
+            ],
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve articles."
+        )
+@app.get(
+    "/articles/feed/details",
+    summary="News feed with details",
+    tags=["Articles"],
+)
+async def get_news_feed_details(
+    neutrality: str | None = Query(default=None,pattern="^(neutral|propaganda)$"),
+    statement_type: str | None = Query(default=None,pattern="^(reporting|opinion)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        stmt = select(ArticleORM)
+
+        if neutrality is not None:
+            stmt = stmt.where(ArticleORM.propaganda_label==neutrality)
+
+        result = await db.execute(stmt)
+        articles = result.scalars().all()
+
+        if not articles:
+            return {
+                "articles": [],
+                "message": ("No articles found."),
+            }
+
+        return {
+            "articles": [
+                ArticleFeedDetailsSchema.model_validate(article)
                 for article in articles
             ],
         }
