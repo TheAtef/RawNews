@@ -303,6 +303,9 @@ async def get_news_feed_details(
         if neutrality is not None:
             stmt = stmt.where(ArticleORM.propaganda_label==neutrality)
 
+        if statement_type is not None:
+            stmt = stmt.where(ArticleORM.statement_type == statement_type)
+
         result = await db.execute(stmt)
         articles = result.scalars().all()
 
