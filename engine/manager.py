@@ -548,7 +548,7 @@ class SourceManager:
                         except Exception:
                             text = None
                     
-                    if text == None or text == title:
+                    if text == None or text.strip() == title.strip():
                         return None
 
                     pub_date = datetime.utcnow()
