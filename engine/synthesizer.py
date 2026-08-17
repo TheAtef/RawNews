@@ -37,43 +37,50 @@ class NewsSynthesizer:
                 self.is_enabled = True
         except Exception as e:
             logger.error("summarizer_init_failed", error=str(e))
-                # logger.error(
-                #         f"summarizer_init_failed: {type(e).__name__}: {e}",
-                #         exc_info=True
-                #     )
+
+
+    def _strip_leading_hook(self, text: str) -> str:
+        sentences = re.split(r'(?<=[.!؟?])\s+', text.strip())
+        idx = 0
+
+        while idx < len(sentences) and idx < 2:
+            s = sentences[idx].strip()
+            if s.endswith('؟') or s.endswith('?') or len(s) < 25:
+                idx += 1
+            else:
+                break
+        cleaned = " ".join(sentences[idx:]).strip()
+        return cleaned if len(cleaned) > 80 else text.strip()
 
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
         articles_content = articles_content[:5]
         for idx, text in enumerate(articles_content):
             cleaned = self._strip_leading_hook(text)
+
             trimmed_text = cleaned[:2800].rsplit(' ', 1)[0]
             if trimmed_text:
                 combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
 
-    
         joined_articles = "\n\n".join(combined_texts)
         article_count = len(articles_content)
 
         if article_count >= 3:
             prompt = (
                 "<start_of_turn>user\n"
-                "أنت محرر صحفي محترف. قم بكتابة ملخص إخباري شامل وموجز بناءً على المصادر المرفقة فقط.\n\n"
-                "قواعد صارمة جداً:\n"
-                "1. لخص بأسلوبك الخاص. يمنع منعاً باتاً نسخ نصوص أو فقرات طويلة حرفياً من المصادر.\n"
-                "2. يجب أن تستخدم نقاط مختصرة (Bullet points) في كل قسم، بحد أقصى 3 نقاط للقسم الواحد.\n"
-                "3. لا تضف أي معلومات، تواريخ، أو أسماء غير موجودة في النص.\n"
-                "4. إذا لم تجد معلومات كافية لقسم معين، اكتب فقط: 'لا تتوفر معلومات إضافية في المصادر'.\n"
-                "5. تجاهل أي روابط أو عبارات ترويجية.\n\n"
-                "الأقسام المطلوبة:\n"
-                "1. تفاصيل الحدث والتطورات.\n"
-                "2. مواقف وتصريحات الأطراف المعنية.\n"
-                "3. التحليلات والتبعات المستقبلية.\n\n"
+                "أنت محرر صحفي دقيق. مهمتك كتابة ملخص إخباري قصير جداً بناءً على المصادر المرفقة فقط.\n\n"
+                "التعليمات الصارمة:\n"
+                "1. استخرج الحدث الرئيسي المشترك بين المصادر في جملتين أو 3 جمل فقط، ككتلة نص واحدة متصلة.\n"
+                "2. تحذير: يُمنع منعاً باتاً إضافة أي تواريخ أو سنوات، أو خلفيات تاريخية، أو أسماء دول أو جهات أو أطراف (مثل دول أو منظمات دولية) لم تُذكر صراحة في النص أعلاه. لا تنسب أي تصريح أو موقف لأي جهة لم يرد ذكرها حرفياً في المصادر.\n"
+                "3. اكتب الملخص بصيغة الخبر (جمل خبرية تقريرية) فقط. يُمنع منعاً باتاً استخدام صيغة السؤال أو علامة الاستفهام (؟) في أي مكان من الملخص، حتى لو وردت أسئلة في المصادر نفسها.\n"
+                "4. لا تكرر عناوين المصادر أو أسلوبها الاستفهامي، بل صف ما حدث فعلياً كوقائع.\n"
+                "5. يُمنع منعاً باتاً استخدام أي ترقيم أو عناوين فرعية أو نقاط متعددة (مثل 1. أو 2. أو عناوين مثل \"مواقف وأطراف\"). اكتب فقرة واحدة فقط بلا تقسيمات.\n"
+                "6. اكتب أسماء الجهات والتنظيمات والأماكن كما وردت بالضبط في النص أعلاه، دون تغيير التهجئة أو اختراع أسماء بديلة.\n"
+                "7. توقف عن الكتابة فوراً بمجرد انتهاء التلخيص.\n\n"
                 f"المصادر الإخبارية:\n{joined_articles}\n"
                 "<end_of_turn>\n"
                 "<start_of_turn>model\n"
-                "التقرير الصحفي الموحد:\n\n"
-                "1. تفاصيل الحدث والتطورات:\n"
+                "الملخص الإخباري:\n"
             )
         else:
             prompt = (
@@ -89,13 +96,33 @@ class NewsSynthesizer:
         return prompt
 
     def _looks_degenerate(self, summary: str) -> bool:
+        """Catch outputs that are questions, multi-section reports, or
+        contain hallucinated/implausible years rather than a clean 2-3
+        sentence summary."""
         if not summary:
             return True
         stripped = summary.strip()
+
         if stripped.endswith('؟') or stripped.endswith('?'):
             return True
         if stripped.count('؟') + stripped.count('?') >= 1 and len(stripped) < 200:
             return True
+
+        if re.search(r'(^|\n)\s*\d+\s*[.\-:]', stripped):
+            return True
+
+        if re.search(r'(^|\n)\s*[ـ\-]\s*(\n|$)', stripped):
+            return True
+
+        current_year = 2026
+        for match in re.findall(r'\b(1[0-9]{3}|2[0-9]{3})\b', stripped):
+            year = int(match)
+            if year < current_year - 5 or year > current_year + 2:
+                return True
+
+        if len(stripped) > 600:
+            return True
+
         return False
 
     async def synthesize_cluster(self, articles_content: List[str]) -> str:
@@ -115,6 +142,9 @@ class NewsSynthesizer:
         if self.use_local:
             try:
                 final_summary = self._generate(prompt, article_count, sample=False)
+
+                # Retry once with light sampling if the greedy pass produced
+                # a question/teaser instead of an actual summary.
                 if self._looks_degenerate(final_summary):
                     logger.warning("degenerate_summary_retry", cluster_preview=final_summary[:80])
                     final_summary = self._generate(prompt, article_count, sample=True)
@@ -132,34 +162,33 @@ class NewsSynthesizer:
         if article_count >= 3:
             if not sample:
                 gen_kwargs = {
-                    "max_new_tokens": 180,
-                    "min_new_tokens": 40,
+                    "max_new_tokens": 140,
+                    "min_new_tokens": 35,
                     "do_sample": False,
-                    "repetition_penalty": 1.25,
-                    "no_repeat_ngram_size": 3,
+                    "repetition_penalty": 1.12,
+                    "no_repeat_ngram_size": 5,
                     "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
                     "eos_token_id": self.tokenizer.eos_token_id,
                 }
             else:
-   
+  
                 gen_kwargs = {
-                    "max_new_tokens": 180,
-                    "min_new_tokens": 40,
+                    "max_new_tokens": 140,
+                    "min_new_tokens": 35,
                     "do_sample": True,
                     "temperature": 0.4,
                     "top_p": 0.9,
-                    "repetition_penalty": 1.2,
-                    "no_repeat_ngram_size": 3,
+                    "repetition_penalty": 1.12,
+                    "no_repeat_ngram_size": 5,
                     "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
                     "eos_token_id": self.tokenizer.eos_token_id,
                 }
         else:
             gen_kwargs = {
-                "max_new_tokens": 400,
-                "min_new_tokens": 30,
+                "max_new_tokens": 500,
                 "do_sample": True,
                 "num_beams": 1,
-                "temperature": 0.10 if not sample else 0.3,
+                "temperature": 0.15,
                 "repetition_penalty": 1.05,
                 "no_repeat_ngram_size": 4,
                 "top_p": 0.85,
@@ -173,10 +202,15 @@ class NewsSynthesizer:
         generated_tokens = outputs[0][input_length:]
         decoded = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
 
+        decoded = re.sub(r'^[\s\-ـ]+', '', decoded).strip()
+
         if article_count >= 3:
             final_summary = "- " + decoded
         else:
             final_summary = decoded
 
         final_summary = re.sub(r"<[^>]+>", "", final_summary).strip()
+        final_summary = re.sub(r'(^|\n)\s*[ـ\-]\s*(\n|$)', '\n', final_summary)
+        final_summary = re.sub(r'(^|\n)\s*\d+\s*[.\-:]{1,2}\s*[^\n]*?:\s*', '\n', final_summary)
+        final_summary = re.sub(r'\n{2,}', '\n', final_summary).strip()
         return final_summary
