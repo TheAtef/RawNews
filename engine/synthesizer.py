@@ -37,19 +37,10 @@ class NewsSynthesizer:
                 self.is_enabled = True
         except Exception as e:
             logger.error("summarizer_init_failed", error=str(e))
-
-    def _strip_leading_hook(self, text: str) -> str:
-        sentences = re.split(r'(?<=[.!؟?])\s+', text.strip())
-        idx = 0
-        while idx < len(sentences) and idx < 2:
-            s = sentences[idx].strip()
-            if s.endswith('؟') or s.endswith('?') or len(s) < 25:
-                idx += 1
-            else:
-                break
-        cleaned = " ".join(sentences[idx:]).strip()
-        # Fallback: if stripping left nothing substantial, use original.
-        return cleaned if len(cleaned) > 80 else text.strip()
+                # logger.error(
+                #         f"summarizer_init_failed: {type(e).__name__}: {e}",
+                #         exc_info=True
+                #     )
 
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
@@ -60,6 +51,7 @@ class NewsSynthesizer:
             if trimmed_text:
                 combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
 
+    
         joined_articles = "\n\n".join(combined_texts)
         article_count = len(articles_content)
 
@@ -70,12 +62,9 @@ class NewsSynthesizer:
                 "قواعد صارمة جداً:\n"
                 "1. لخص بأسلوبك الخاص. يمنع منعاً باتاً نسخ نصوص أو فقرات طويلة حرفياً من المصادر.\n"
                 "2. يجب أن تستخدم نقاط مختصرة (Bullet points) في كل قسم، بحد أقصى 3 نقاط للقسم الواحد.\n"
-                "3. إذا كانت المصادر لا تحتوي على 3 معلومات مختلفة، اكتب فقط المعلومات المتوفرة.\n"
-                "4. لا تضف أي معلومات، تواريخ، أو أسماء غير موجودة في النص.\n"
-                "5. إذا لم تجد معلومات كافية لقسم معين، اكتب فقط: 'لا تتوفر معلومات إضافية في المصادر'.\n"
-                "6. كل نقطة يجب أن تحتوي معلومة مختلفة عن النقاط الأخرى.\n"
-                "7. حافظ على أسماء الأشخاص والجهات والدول والمدن والمناصب كما وردت حرفياً في المصادر.\n"
-                "8. تجاهل أي روابط أو عبارات ترويجية.\n\n"
+                "3. لا تضف أي معلومات، تواريخ، أو أسماء غير موجودة في النص.\n"
+                "4. إذا لم تجد معلومات كافية لقسم معين، اكتب فقط: 'لا تتوفر معلومات إضافية في المصادر'.\n"
+                "5. تجاهل أي روابط أو عبارات ترويجية.\n\n"
                 "الأقسام المطلوبة:\n"
                 "1. تفاصيل الحدث والتطورات.\n"
                 "2. مواقف وتصريحات الأطراف المعنية.\n"

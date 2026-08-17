@@ -112,18 +112,13 @@ async def generate_cluster_summary(cluster_id: int,synthesizer: NewsSynthesizer 
     async with AsyncSessionLocal() as session:
         try:
             cluster = await session.get(ClusterORM, cluster_id)
-
             if cluster is None:
                 return None
-
             result = await session.execute(select(ArticleORM).where(ArticleORM.cluster_id == cluster_id))
             articles = result.scalars().all()
-
             if not articles:
                 return None
             articles_content = [article.content_clean or article.content or article.title for article in articles]
-
-
             if not articles_content:
                 return None
             logger.info(f"Starting Gemma summarization "f"for cluster {cluster_id}...")
