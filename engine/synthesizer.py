@@ -28,7 +28,7 @@ class NewsSynthesizer:
             if self.tokenizer is None or self.model is None:
                 logger.info("loading_local_gemma_pipeline", model_id=settings.gemma_model_id)
                 self.tokenizer = AutoTokenizer.from_pretrained(settings.gemma_model_id)
-                
+
                 self.model = AutoModelForCausalLM.from_pretrained(
                     settings.gemma_model_id,
                     torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
@@ -37,16 +37,26 @@ class NewsSynthesizer:
                 self.is_enabled = True
         except Exception as e:
             logger.error("summarizer_init_failed", error=str(e))
-                # logger.error(
-                #         f"summarizer_init_failed: {type(e).__name__}: {e}",
-                #         exc_info=True
-                #     )
+
+    def _strip_leading_hook(self, text: str) -> str:
+        sentences = re.split(r'(?<=[.!؟?])\s+', text.strip())
+        idx = 0
+        while idx < len(sentences) and idx < 2:
+            s = sentences[idx].strip()
+            if s.endswith('؟') or s.endswith('?') or len(s) < 25:
+                idx += 1
+            else:
+                break
+        cleaned = " ".join(sentences[idx:]).strip()
+        # Fallback: if stripping left nothing substantial, use original.
+        return cleaned if len(cleaned) > 80 else text.strip()
 
     def _build_prompt(self, articles_content: List[str]) -> str:
         combined_texts = []
-        articles_content = articles_content[:5] 
+        articles_content = articles_content[:5]
         for idx, text in enumerate(articles_content):
-            trimmed_text = text.strip()[:2000].rsplit(' ', 1)[0]
+            cleaned = self._strip_leading_hook(text)
+            trimmed_text = cleaned[:2800].rsplit(' ', 1)[0]
             if trimmed_text:
                 combined_texts.append(f"--- المصدر {idx + 1} ---\n{trimmed_text}")
 
@@ -60,9 +70,12 @@ class NewsSynthesizer:
                 "قواعد صارمة جداً:\n"
                 "1. لخص بأسلوبك الخاص. يمنع منعاً باتاً نسخ نصوص أو فقرات طويلة حرفياً من المصادر.\n"
                 "2. يجب أن تستخدم نقاط مختصرة (Bullet points) في كل قسم، بحد أقصى 3 نقاط للقسم الواحد.\n"
-                "3. لا تضف أي معلومات، تواريخ، أو أسماء غير موجودة في النص.\n"
-                "4. إذا لم تجد معلومات كافية لقسم معين، اكتب فقط: 'لا تتوفر معلومات إضافية في المصادر'.\n"
-                "5. تجاهل أي روابط أو عبارات ترويجية.\n\n"
+                "3. إذا كانت المصادر لا تحتوي على 3 معلومات مختلفة، اكتب فقط المعلومات المتوفرة.\n"
+                "4. لا تضف أي معلومات، تواريخ، أو أسماء غير موجودة في النص.\n"
+                "5. إذا لم تجد معلومات كافية لقسم معين، اكتب فقط: 'لا تتوفر معلومات إضافية في المصادر'.\n"
+                "6. كل نقطة يجب أن تحتوي معلومة مختلفة عن النقاط الأخرى.\n"
+                "7. حافظ على أسماء الأشخاص والجهات والدول والمدن والمناصب كما وردت حرفياً في المصادر.\n"
+                "8. تجاهل أي روابط أو عبارات ترويجية.\n\n"
                 "الأقسام المطلوبة:\n"
                 "1. تفاصيل الحدث والتطورات.\n"
                 "2. مواقف وتصريحات الأطراف المعنية.\n"
@@ -76,14 +89,26 @@ class NewsSynthesizer:
         else:
             prompt = (
                 "<start_of_turn>user\n"
-                "أنت محرر صحفي دقيق. قم بكتابة ملخص إخباري قصير ومباشر (في حدود 2-3 أسطر) بناءً على المصدر المرفق.\n"
-                "تحذير: لا تنسخ النص حرفياً، لخص بأسلوبك، ولا تخترع أي أسئلة أو معلومات من خارج النص. استخرج الحقائق فقط.\n\n"
+                "أنت محرر صحفي دقيق. قم بكتابة ملخص إخباري قصير ومباشر بناءً على المصدر المرفق.\n"
+                "تحذير: لا تنسخ النص حرفياً، لخص بأسلوبك، ولا تخترع أي معلومات أو أحداث من خارج النص. استخرج الحقائق فقط.\n"
+                "اكتب الملخص بصيغة الخبر فقط، ويُمنع استخدام صيغة السؤال أو علامة الاستفهام (؟).\n\n"
                 f"المصدر الإخباري:\n{joined_articles}\n"
                 "<end_of_turn>\n"
                 "<start_of_turn>model\n"
                 "الملخص الإخباري:\n"
             )
         return prompt
+
+    def _looks_degenerate(self, summary: str) -> bool:
+        if not summary:
+            return True
+        stripped = summary.strip()
+        if stripped.endswith('؟') or stripped.endswith('?'):
+            return True
+        if stripped.count('؟') + stripped.count('?') >= 1 and len(stripped) < 200:
+            return True
+        return False
+
     async def synthesize_cluster(self, articles_content: List[str]) -> str:
         if not articles_content:
             return ""
@@ -93,41 +118,76 @@ class NewsSynthesizer:
 
         prompt = self._build_prompt(articles_content)
         article_count = len(articles_content)
-        
+
         total_text_length = sum(len(text) for text in articles_content)
         if total_text_length < 150:
             return "المحتوى المتاح قصير جداً (عناوين فقط) ولا يكفي لتوليد ملخص دقيق."
 
         if self.use_local:
             try:
-                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-                input_length = inputs["input_ids"].shape[1]
-                torch.cuda.empty_cache()
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=400,        
-                        do_sample=False,     
-                        num_beams=1,              
-                        repetition_penalty=1.15,    
-                        early_stopping=True,
-                        pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
-                    )
-
-                generated_tokens = outputs[0][input_length:]
-                decoded = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
-
-                if article_count >= 3:
-                    final_summary = "1. تفاصيل الحدث والتطورات:\n" + decoded
-                else:
-                    final_summary = decoded
-
-                final_summary = re.sub(r"<[^>]+>", "", final_summary).strip()
-
-                if article_count >= 3 and re.search(r'\n(?:4|10)\.', final_summary):
-                    final_summary = re.split(r'\n(?:4|10)\.', final_summary)[0].strip()
+                final_summary = self._generate(prompt, article_count, sample=False)
+                if self._looks_degenerate(final_summary):
+                    logger.warning("degenerate_summary_retry", cluster_preview=final_summary[:80])
+                    final_summary = self._generate(prompt, article_count, sample=True)
 
                 return final_summary
             except Exception as e:
                 logger.error("local_gemma_synthesis_failed", error=str(e))
                 return ""
+
+    def _generate(self, prompt: str, article_count: int, sample: bool) -> str:
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        input_length = inputs["input_ids"].shape[1]
+        torch.cuda.empty_cache()
+
+        if article_count >= 3:
+            if not sample:
+                gen_kwargs = {
+                    "max_new_tokens": 180,
+                    "min_new_tokens": 40,
+                    "do_sample": False,
+                    "repetition_penalty": 1.25,
+                    "no_repeat_ngram_size": 3,
+                    "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                    "eos_token_id": self.tokenizer.eos_token_id,
+                }
+            else:
+   
+                gen_kwargs = {
+                    "max_new_tokens": 180,
+                    "min_new_tokens": 40,
+                    "do_sample": True,
+                    "temperature": 0.4,
+                    "top_p": 0.9,
+                    "repetition_penalty": 1.2,
+                    "no_repeat_ngram_size": 3,
+                    "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                    "eos_token_id": self.tokenizer.eos_token_id,
+                }
+        else:
+            gen_kwargs = {
+                "max_new_tokens": 400,
+                "min_new_tokens": 30,
+                "do_sample": True,
+                "num_beams": 1,
+                "temperature": 0.10 if not sample else 0.3,
+                "repetition_penalty": 1.05,
+                "no_repeat_ngram_size": 4,
+                "top_p": 0.85,
+                "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                "eos_token_id": self.tokenizer.eos_token_id,
+            }
+
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, **gen_kwargs)
+
+        generated_tokens = outputs[0][input_length:]
+        decoded = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+
+        if article_count >= 3:
+            final_summary = "- " + decoded
+        else:
+            final_summary = decoded
+
+        final_summary = re.sub(r"<[^>]+>", "", final_summary).strip()
+        return final_summary
