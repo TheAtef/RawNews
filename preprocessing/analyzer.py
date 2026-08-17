@@ -120,7 +120,7 @@ class HeuristicScorer:
 
     def calculate_neutrality_score(self, tokens: List[str]) -> float:
         density = calculate_loaded_words_ratio(tokens)
-        score = max(0.0, 1.0 - (density * 25.0))
+        score = max(0.0, 1.0 - (density * 20.0))
         return round(score, 2)
 
     def calculate_attribution_score(self, text: str, title: str = "") -> float:

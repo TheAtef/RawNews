@@ -440,6 +440,10 @@ class SourceManager:
                 neutrality_score=scores["neutrality_score"]
             )
 
+            bias_percentage = round((1.0 - scores["neutrality_score"]) * 100, 1)
+            
+            if bias_percentage > 50.0 and predicted_propaganda.lower() in ("neutral", "no_propaganda"):
+                predicted_propaganda = "propaganda"
             is_verified = (
                 scores["reliability_score"] >= 0.70 and 
                 scores["neutrality_score"] >= 0.60 and          
@@ -544,7 +548,7 @@ class SourceManager:
                         except Exception:
                             text = None
                     
-                    if text == None or text == title:
+                    if text == None or text.strip() == title.strip():
                         return None
 
                     pub_date = datetime.utcnow()
